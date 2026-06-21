@@ -186,13 +186,17 @@ func (ui *UI) exportDir(dir fs.Item, waitWritten *sync.WaitGroup) error {
 }
 
 func (ui *UI) exportParquet(dir fs.Item, waitWritten *sync.WaitGroup) error {
+	id := common.CollectScanIdentity()
 	meta := parquet.ScanMeta{
 		ScanRoot:       dir.GetPath(),
 		ScanTime:       time.Now().UTC(),
 		ThresholdBytes: ui.ExportThreshold,
+		Host:           id.Host,
+		Username:       id.Username,
+		SudoUser:       id.SudoUser,
 	}
 
-	if err := parquet.WriteTree(ui.exportOutput, dir, meta); err != nil {
+	if err := parquet.WriteTree(ui.exportOutput, dir, &meta); err != nil {
 		return err
 	}
 

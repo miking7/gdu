@@ -168,6 +168,15 @@ func (f *Dir) AddFile(item fs.Item) {
 // GetFiles returns all files in directory as a sorted iterator
 func (f *Dir) GetFiles(sortBy fs.SortBy, order fs.SortOrder) iter.Seq[fs.Item] {
 	return func(yield func(fs.Item) bool) {
+		if sortBy == fs.SortByNone {
+			for _, item := range f.Files {
+				if !yield(item) {
+					return
+				}
+			}
+			return
+		}
+
 		// Make a copy to avoid modifying the original slice
 		sorted := make(fs.Files, len(f.Files))
 		copy(sorted, f.Files)
@@ -187,6 +196,15 @@ func (f *Dir) GetFilesLocked(sortBy fs.SortBy, order fs.SortOrder) iter.Seq[fs.I
 	return func(yield func(fs.Item) bool) {
 		f.m.RLock()
 		defer f.m.RUnlock()
+
+		if sortBy == fs.SortByNone {
+			for _, item := range f.Files {
+				if !yield(item) {
+					return
+				}
+			}
+			return
+		}
 
 		// Make a copy to avoid modifying the original slice
 		sorted := make(fs.Files, len(f.Files))
@@ -317,6 +335,12 @@ func sortFiles(files fs.Files, sortBy fs.SortBy, order fs.SortOrder) {
 		sorter = fs.ByApparentSize(files)
 	case fs.SortBySize:
 		sorter = files
+	case fs.SortByNone:
+		return // unsorted — leave the order as-is
+	}
+
+	if sorter == nil {
+		return
 	}
 
 	if order == fs.SortDesc {

@@ -46,6 +46,13 @@ scans directory. It does not change what gdu displays. Snapshots use a default r
 
 Directory for `save-scan` snapshots. Defaults to `$HOME/.gdu-scans` (created if missing).
 
+#### `owner`
+
+Make written output (snapshots and `-o` exports) owned by the named user: gdu resolves that user's
+home directory for the default `scans-dir` and `chown`s output back to them. Intended for scheduled
+**root** scans (cron/systemd/launchd), which don't run under `sudo`. No effect unless gdu is running
+as root. See [docs/scheduling.md](docs/scheduling.md).
+
 #### `ignore-dirs`
 
 Paths to ignore (separated by comma). Can be absolute (like `/proc`) or relative to the current working directory (like `node_modules`). Default values are [/proc,/dev,/sys,/run].

@@ -12,6 +12,11 @@ Pretty fast disk usage analyzer written in Go.
 Gdu is intended primarily for SSD disks where it can fully utilize parallel processing.
 However HDDs work as well, but the performance gain is not so huge.
 
+> **This is a fork of [dundee/gdu](https://github.com/dundee/gdu), kept upstreamable.** It adds
+> Parquet scan snapshots, threshold rollups, and sudo-friendly output. See **[FORK.md](./FORK.md)**
+> for what differs from upstream, and **[docs/scheduling.md](./docs/scheduling.md)** for scheduling
+> periodic scans on macOS/Linux.
+
 [![asciicast](https://asciinema.org/a/382738.svg)](https://asciinema.org/a/382738)
 
 <a href="https://repology.org/project/gdu/versions">
@@ -74,6 +79,7 @@ Flags:
   -r, --read-from-storage             Use existing database instead of re-scanning
       --save-scan                     Save each completed scan as a Parquet snapshot in the scans directory (default threshold 10M)
       --scans-dir string              Directory for --save-scan snapshots (default $HOME/.gdu-scans)
+      --owner string                  Make written output (snapshots, -o exports) owned by this user; for scheduled root scans
       --reverse-sort                  Reverse sorting order (smallest to largest) in non-interactive mode
       --sequential                    Use sequential scanning (intended for rotating HDDs)
   -A, --show-annexed-size             Use apparent size of git-annex'ed files in case files are not present locally (real usage is zero)
@@ -262,10 +268,17 @@ gdu -n --save-scan /                     # works in non-interactive mode too (e.
 ```
 
 `--save-scan` does not change what gdu shows; it just writes
-`scan_<timestamp>.parquet` into the scans directory (default `$HOME/.gdu-scans`) as the scan
-completes. Snapshots use a default rollup threshold of 10M (objects smaller than that are grouped
+`scan_<timestamp>.parquet` (local time) into the scans directory (default `$HOME/.gdu-scans`) as the
+scan completes. Snapshots use a default rollup threshold of 10M (objects smaller than that are grouped
 into a `<smaller objects>` row); override it with `--threshold`. Reload any snapshot with
 `gdu -f <snapshot>.parquet`.
+
+When you scan with `sudo`, gdu writes snapshots into the **invoking** user's `~/.gdu-scans` and hands
+the files back to that user (so they stay readable without root). Each row also records `host`,
+`username` (the effective user, e.g. `root`) and `sudo_user` (the invoking user), so you can tell
+which scans ran elevated. For a scheduled root scan (which isn't under `sudo`), `--owner <user>`
+requests the same hand-back. To run scans on a schedule (daily, 6-hourly, …) on macOS or Linux, see
+[docs/scheduling.md](./docs/scheduling.md).
 
 ## Running tests
 

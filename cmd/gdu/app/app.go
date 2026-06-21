@@ -109,6 +109,7 @@ type Flags struct {
 	ExportThreshold    string   `yaml:"export-threshold"`
 	SaveScan           bool     `yaml:"save-scan"`
 	ScansDir           string   `yaml:"scans-dir"`
+	Owner              string   `yaml:"owner"`
 }
 
 // defaultSaveScanThreshold is the rollup threshold used for auto-saved snapshots
@@ -283,6 +284,15 @@ func (a *App) Run() error {
 	}
 	ui.SetExportThreshold(threshold)
 
+	// --owner makes written output belong to the named user (resolves their home
+	// for the default scans-dir and chowns output to them). Applied before the
+	// scans-dir is resolved and before any file is written.
+	if a.Flags.Owner != "" {
+		if oerr := common.ApplyOwnerOverride(a.Flags.Owner); oerr != nil {
+			return fmt.Errorf("invalid --owner: %w", oerr)
+		}
+	}
+
 	if a.Flags.SaveScan {
 		scansDir, derr := a.resolveScansDir()
 		if derr != nil {
@@ -337,6 +347,13 @@ func (a *App) Run() error {
 		return err
 	}
 
+	// Hand any file written as root (export -o) back to the invoking user so a
+	// sudo scan leaves user-owned output. Snapshots (--save-scan) and TUI exports
+	// chown themselves at their own write sites.
+	if a.Flags.OutputFile != "" && a.Flags.OutputFile != "-" {
+		common.ChownToInvoker(a.Flags.OutputFile)
+	}
+
 	return ui.StartUILoop()
 }
 
@@ -368,6 +385,11 @@ func (a *App) resolveOutputFormat() (string, error) {
 func (a *App) resolveScansDir() (string, error) {
 	if a.Flags.ScansDir != "" {
 		return a.Flags.ScansDir, nil
+	}
+	// Under sudo, prefer the invoking user's home over $HOME (which may be /root),
+	// so snapshots land in the real user's ~/.gdu-scans.
+	if _, _, realHome, ok := common.RealUser(); ok && realHome != "" {
+		return filepath.Join(realHome, ".gdu-scans"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

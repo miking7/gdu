@@ -20,6 +20,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/dundee/gdu/v5/build"
+	"github.com/dundee/gdu/v5/internal/common"
 	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
 	"github.com/dundee/gdu/v5/pkg/fs"
@@ -107,6 +108,10 @@ func (ui *UI) AnalyzePath(path string, parentDir fs.Item) error {
 		// Persist a snapshot of the just-completed top-level scan. This is a
 		// background side effect and never alters the UI.
 		if parentDir == nil && ui.SaveScanEnabled {
+			// Collect the scan's transient garbage first so the snapshot write
+			// reuses freed heap instead of raising peak RSS (which macOS keeps
+			// resident); otherwise --save-scan inflates memory while browsing.
+			runtime.GC()
 			ui.saveScanSnapshot(ui.topDir)
 		}
 
@@ -163,7 +168,9 @@ func (ui *UI) ReadAnalysis(input io.Reader) error {
 			}
 			return
 		}
-		runtime.GC()
+		// The Parquet/JSON reader churns a lot of short-lived memory; return it to
+		// the OS before the long-lived browsing session (see RAM notes in the plan).
+		debug.FreeOSMemory()
 
 		ui.topDirPath = ui.currentDir.GetPath()
 		ui.topDir = ui.currentDir
@@ -440,6 +447,12 @@ func (ui *UI) exportAnalysis() {
 			ui.showErrFromGo("Error writing to file", err)
 			return
 		}
+		if err = file.Close(); err != nil {
+			ui.showErrFromGo("Error closing file", err)
+			return
+		}
+		// Hand the export back to the invoking user when running under sudo.
+		common.ChownToInvoker(ui.exportName)
 	}()
 }
 

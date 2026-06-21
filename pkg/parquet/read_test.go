@@ -20,7 +20,7 @@ func writeAndRead(t *testing.T, root *analyze.Dir, threshold int64) *analyze.Dir
 		ThresholdBytes: threshold,
 	}
 	var buf bytes.Buffer
-	require.NoError(t, WriteTree(&buf, root, meta))
+	require.NoError(t, WriteTree(&buf, root, &meta))
 
 	got, err := ReadTree(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
 	require.NoError(t, err)

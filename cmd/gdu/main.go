@@ -59,6 +59,9 @@ func init() {
 		"Save each completed scan as a Parquet snapshot in the scans directory (default threshold 10M).")
 	flags.StringVar(&af.ScansDir, "scans-dir", "",
 		"Directory for --save-scan snapshots (default $HOME/.gdu-scans).")
+	flags.StringVar(&af.Owner, "owner", "",
+		"Make written output (snapshots, -o exports) owned by this user: resolves their "+
+			"home for the default scans-dir and chowns output to them. For scheduled root scans.")
 	flags.IntVarP(&af.MaxCores, "max-cores", "m", runtime.NumCPU(), fmt.Sprintf("Set max cores that Gdu will use. %d cores available", runtime.NumCPU()))
 	flags.BoolVar(&af.SequentialScanning, "sequential", false, "Use sequential scanning (intended for rotating HDDs)")
 	flags.BoolVarP(&af.ShowVersion, "version", "v", false, "Print version")

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -20,18 +21,43 @@ const parquetMagic = "PAR1"
 // same code path serves both `gdu -f file.json` and `gdu -f file.parquet`
 // (including stdin).
 func ReadAnalysis(input io.Reader) (dir *analyze.Dir, err error) {
-	var data any
+	// A seekable file lets us sniff the magic and stream a Parquet snapshot
+	// directly, without buffering the whole (possibly multi-hundred-MB) file.
+	if f, ok := input.(*os.File); ok {
+		if d, handled, perr := readParquetFile(f); handled {
+			return d, perr
+		}
+	}
 
 	var buff bytes.Buffer
 	if _, err = buff.ReadFrom(input); err != nil {
 		return nil, err
 	}
-
 	raw := buff.Bytes()
 	if len(raw) >= len(parquetMagic) && string(raw[:len(parquetMagic)]) == parquetMagic {
 		return parquet.ReadTree(bytes.NewReader(raw), int64(len(raw)))
 	}
+	return parseJSONAnalysis(raw)
+}
 
+// readParquetFile streams a Parquet snapshot straight from a seekable file when
+// the magic matches. handled is false (with no error) when f is not a readable
+// Parquet file, so the caller falls back to buffering + JSON parsing.
+func readParquetFile(f *os.File) (dir *analyze.Dir, handled bool, err error) {
+	st, statErr := f.Stat()
+	if statErr != nil {
+		return nil, false, nil
+	}
+	magic := make([]byte, len(parquetMagic))
+	if _, rerr := f.ReadAt(magic, 0); rerr != nil || string(magic) != parquetMagic {
+		return nil, false, nil
+	}
+	d, derr := parquet.ReadTree(f, st.Size())
+	return d, true, derr
+}
+
+func parseJSONAnalysis(raw []byte) (*analyze.Dir, error) {
+	var data any
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return nil, err
 	}

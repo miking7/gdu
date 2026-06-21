@@ -33,9 +33,12 @@ type Row struct {
 	DirTotalFolders *int64 `parquet:"dir_total_folders,optional"`
 
 	// per-scan metadata
-	ScanRoot       string `parquet:"scan_root"`
-	ScanTs         int64  `parquet:"scan_ts,timestamp(millisecond)"`
-	ThresholdBytes int64  `parquet:"threshold_bytes"`
+	ScanRoot       string  `parquet:"scan_root"`
+	ScanTs         int64   `parquet:"scan_ts,timestamp(millisecond)"`
+	ThresholdBytes int64   `parquet:"threshold_bytes"`
+	Host           string  `parquet:"host,zstd"`               // os.Hostname()
+	Username       string  `parquet:"username,zstd"`           // effective user the scan ran as
+	SudoUser       *string `parquet:"sudo_user,optional,zstd"` // invoking user under sudo; null otherwise
 
 	// gdu-native passthrough
 	Mtime int64   `parquet:"mtime,timestamp(millisecond)"`

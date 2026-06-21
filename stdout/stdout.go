@@ -234,6 +234,7 @@ func (ui *UI) AnalyzePath(path string, _ fs.Item) error {
 	// Persist a snapshot of the completed scan as a side effect; output is
 	// unchanged whether or not --save-scan is set.
 	if ui.SaveScanEnabled {
+		runtime.GC() // reclaim scan garbage so the write doesn't raise peak RSS
 		ui.saveScanSnapshot(dir)
 	}
 

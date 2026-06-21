@@ -114,6 +114,8 @@ non-interactive mode
 
 **\--scans-dir** Directory for --save-scan snapshots (default $HOME/.gdu-scans).
 
+**\--owner** Make written output (snapshots, -o exports) owned by this user: resolves their home for the default scans-dir and chowns output to them. For scheduled root scans.
+
 **\--config-file**=\"$HOME/.gdu.yaml\"             Read config from file
 
 **\--write-config**\[=false\] Write current configuration to file (default is $HOME/.gdu.yaml)

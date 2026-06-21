@@ -36,7 +36,7 @@ func sampleTree() *analyze.Dir {
 func readRows(t *testing.T, root *analyze.Dir, meta ScanMeta) map[string]Row {
 	t.Helper()
 	var buf bytes.Buffer
-	require.NoError(t, WriteTree(&buf, root, meta))
+	require.NoError(t, WriteTree(&buf, root, &meta))
 
 	rows, err := pq.Read[Row](bytes.NewReader(buf.Bytes()), int64(buf.Len()))
 	require.NoError(t, err)
@@ -121,10 +121,42 @@ func TestWriteTreeStampsMetadata(t *testing.T) {
 	assert.Equal(t, int64(4096), big.ThresholdBytes)
 }
 
+func TestWriteTreeStampsIdentity(t *testing.T) {
+	root := sampleTree()
+	meta := ScanMeta{
+		ScanRoot: root.GetPath(),
+		ScanTime: time.Unix(1700000000, 0).UTC(),
+		Host:     "host1",
+		Username: "root",
+		SudoUser: "alice",
+	}
+	byName := readRows(t, root, meta)
+
+	big := byName["big"]
+	assert.Equal(t, "host1", big.Host)
+	assert.Equal(t, "root", big.Username)
+	require.NotNil(t, big.SudoUser)
+	assert.Equal(t, "alice", *big.SudoUser)
+}
+
+func TestWriteTreeNoSudoUserIsNull(t *testing.T) {
+	root := sampleTree()
+	meta := ScanMeta{
+		ScanRoot: root.GetPath(), ScanTime: time.Unix(1700000000, 0).UTC(),
+		Host: "h", Username: "u", // SudoUser empty => null column
+	}
+	byName := readRows(t, root, meta)
+	assert.Nil(t, byName["big"].SudoUser)
+}
+
 func TestSchemaIsTimezoneAware(t *testing.T) {
 	s := pq.SchemaOf(Row{}).String()
 	assert.Contains(t, s, "scan_ts")
 	assert.Contains(t, s, "dir_total_dsize")
 	// The user requires a timezone-aware timestamp (DuckDB TIMESTAMPTZ).
 	assert.Contains(t, s, "isAdjustedToUTC=true")
+	// Identity columns added post-MVP.
+	assert.Contains(t, s, "host")
+	assert.Contains(t, s, "username")
+	assert.Contains(t, s, "sudo_user")
 }
