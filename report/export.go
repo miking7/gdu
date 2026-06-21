@@ -16,6 +16,7 @@ import (
 	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
 	"github.com/dundee/gdu/v5/pkg/fs"
+	"github.com/dundee/gdu/v5/pkg/parquet"
 	"github.com/fatih/color"
 )
 
@@ -27,6 +28,12 @@ type UI struct {
 	red          *color.Color
 	orange       *color.Color
 	writtenChan  chan struct{}
+	outputFormat string
+}
+
+// SetOutputFormat selects the export format ("json" or "parquet"). Empty means JSON.
+func (ui *UI) SetOutputFormat(format string) {
+	ui.outputFormat = format
 }
 
 // CreateExportUI creates UI for stdout
@@ -134,6 +141,14 @@ func (ui *UI) AnalyzePath(path string, _ fs.Item) error {
 func (ui *UI) exportDir(dir fs.Item, waitWritten *sync.WaitGroup) error {
 	// Sorting is now handled by GetFiles with sort parameters
 
+	if ui.outputFormat == "parquet" {
+		return ui.exportParquet(dir, waitWritten)
+	}
+
+	if ui.ExportThreshold > 0 {
+		dir = analyze.Rollup(dir, ui.ExportThreshold)
+	}
+
 	var (
 		buff bytes.Buffer
 		err  error
@@ -158,6 +173,31 @@ func (ui *UI) exportDir(dir fs.Item, waitWritten *sync.WaitGroup) error {
 	if f, ok := ui.exportOutput.(*os.File); ok {
 		err = f.Close()
 		if err != nil {
+			return err
+		}
+	}
+
+	if ui.ShowProgress {
+		ui.writtenChan <- struct{}{}
+		waitWritten.Wait()
+	}
+
+	return nil
+}
+
+func (ui *UI) exportParquet(dir fs.Item, waitWritten *sync.WaitGroup) error {
+	meta := parquet.ScanMeta{
+		ScanRoot:       dir.GetPath(),
+		ScanTime:       time.Now().UTC(),
+		ThresholdBytes: ui.ExportThreshold,
+	}
+
+	if err := parquet.WriteTree(ui.exportOutput, dir, meta); err != nil {
+		return err
+	}
+
+	if f, ok := ui.exportOutput.(*os.File); ok {
+		if err := f.Close(); err != nil {
 			return err
 		}
 	}

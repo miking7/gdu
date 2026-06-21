@@ -14,8 +14,10 @@ import (
 	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
 	"github.com/dundee/gdu/v5/pkg/fs"
+	"github.com/dundee/gdu/v5/pkg/parquet"
 	"github.com/dundee/gdu/v5/report"
 	"github.com/fatih/color"
+	log "github.com/sirupsen/logrus"
 )
 
 // UI struct
@@ -229,6 +231,12 @@ func (ui *UI) AnalyzePath(path string, _ fs.Item) error {
 
 	wait.Wait()
 
+	// Persist a snapshot of the completed scan as a side effect; output is
+	// unchanged whether or not --save-scan is set.
+	if ui.SaveScanEnabled {
+		ui.saveScanSnapshot(dir)
+	}
+
 	switch {
 	case ui.top > 0:
 		ui.printTopFiles(dir)
@@ -241,6 +249,15 @@ func (ui *UI) AnalyzePath(path string, _ fs.Item) error {
 	}
 
 	return nil
+}
+
+func (ui *UI) saveScanSnapshot(tree fs.Item) {
+	path, err := parquet.SaveSnapshot(tree, ui.SaveScanDir, ui.SaveScanThreshold, time.Now())
+	if err != nil {
+		log.Printf("save-scan failed: %s", err)
+		return
+	}
+	log.Printf("Saved scan snapshot to %s", path)
 }
 
 // ReadFromStorage reads analysis data from persistent key-value storage

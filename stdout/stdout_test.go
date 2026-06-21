@@ -39,6 +39,29 @@ func TestAnalyzePath(t *testing.T) {
 	assert.Contains(t, output.String(), "nested")
 }
 
+func TestAnalyzePathSaveScan(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	scansDir := t.TempDir()
+	output := bytes.NewBuffer(make([]byte, 10))
+
+	ui := CreateStdoutUI(output, false, false, false, false, false, false, false, "", 0, false, 0)
+	ui.SetAnalyzer(analyze.CreateAnalyzer()) // full tree, as the app does for --save-scan
+	ui.SetSaveScan(scansDir, 0)
+	ui.SetIgnoreDirPaths([]string{"/xxx"})
+	err := ui.AnalyzePath("test_dir", nil)
+	assert.Nil(t, err)
+
+	entries, err := os.ReadDir(scansDir)
+	assert.Nil(t, err)
+	assert.Len(t, entries, 1)
+	assert.True(t, strings.HasPrefix(entries[0].Name(), "scan_"))
+	assert.True(t, strings.HasSuffix(entries[0].Name(), ".parquet"))
+	// --save-scan must not change the printed output.
+	assert.Contains(t, output.String(), "nested")
+}
+
 func TestShowItemCountInNonInteractiveMode(t *testing.T) {
 	tmpDir := t.TempDir()
 

@@ -9,9 +9,16 @@ import (
 	"time"
 
 	"github.com/dundee/gdu/v5/pkg/analyze"
+	"github.com/dundee/gdu/v5/pkg/parquet"
 )
 
-// ReadAnalysis reads analysis report from JSON file and returns directory item
+// parquetMagic frames every Parquet file at both ends.
+const parquetMagic = "PAR1"
+
+// ReadAnalysis reads an analysis report (JSON or Parquet) and returns the
+// directory tree. The format is detected from the leading file magic, so the
+// same code path serves both `gdu -f file.json` and `gdu -f file.parquet`
+// (including stdin).
 func ReadAnalysis(input io.Reader) (dir *analyze.Dir, err error) {
 	var data any
 
@@ -19,7 +26,13 @@ func ReadAnalysis(input io.Reader) (dir *analyze.Dir, err error) {
 	if _, err = buff.ReadFrom(input); err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(buff.Bytes(), &data); err != nil {
+
+	raw := buff.Bytes()
+	if len(raw) >= len(parquetMagic) && string(raw[:len(parquetMagic)]) == parquetMagic {
+		return parquet.ReadTree(bytes.NewReader(raw), int64(len(raw)))
+	}
+
+	if err := json.Unmarshal(raw, &data); err != nil {
 		return nil, err
 	}
 

@@ -149,6 +149,30 @@ func TestAnalyzePathWithParentDir(t *testing.T) {
 	assert.Contains(t, ui.table.GetCell(1, 0).Text, "ddd")
 }
 
+func TestAnalyzePathSaveScan(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	simScreen := testapp.CreateSimScreen()
+	defer simScreen.Fini()
+
+	scansDir := t.TempDir()
+
+	app := testapp.CreateMockedApp(true)
+	ui := CreateUI(app, simScreen, &bytes.Buffer{}, false, true, true, true)
+	ui.SetSaveScan(scansDir, 0)
+	ui.done = make(chan struct{})
+	err := ui.AnalyzePath("test_dir", nil)
+	assert.Nil(t, err)
+
+	<-ui.done // the snapshot is written before the analyzer signals done
+
+	entries, err := os.ReadDir(scansDir)
+	assert.Nil(t, err)
+	assert.Len(t, entries, 1)
+	assert.Regexp(t, `^scan_.*\.parquet$`, entries[0].Name())
+}
+
 func TestReadAnalysis(t *testing.T) {
 	simScreen := testapp.CreateSimScreen()
 	defer simScreen.Fini()

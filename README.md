@@ -52,7 +52,7 @@ Flags:
   -i, --ignore-dirs strings           Paths to ignore (separated by comma). Can be absolute or relative to current directory (default [/proc,/dev,/sys,/run])
   -I, --ignore-dirs-pattern strings   Path patterns to ignore (separated by comma)
   -X, --ignore-from string            Read path patterns to ignore from file
-  -f, --input-file string             Import analysis from JSON file
+  -f, --input-file string             Import analysis from JSON or Parquet file (format auto-detected)
       --interactive                   Force interactive mode even when output is not a TTY
   -l, --log-file string               Path to a logfile (default "/dev/null")
       --max-age string                Include files with mtime no older than DURATION (e.g., 7d, 2h30m, 1y2mo)
@@ -70,7 +70,10 @@ Flags:
       --no-view-file                  Do not allow viewing file contents
   -n, --non-interactive               Do not run in interactive mode
   -o, --output-file string            Export all info into file as JSON
+      --output-format string          Export format: json (default) or parquet. Inferred from the -o file extension when unset.
   -r, --read-from-storage             Use existing database instead of re-scanning
+      --save-scan                     Save each completed scan as a Parquet snapshot in the scans directory (default threshold 10M)
+      --scans-dir string              Directory for --save-scan snapshots (default $HOME/.gdu-scans)
       --reverse-sort                  Reverse sorting order (smallest to largest) in non-interactive mode
       --sequential                    Use sequential scanning (intended for rotating HDDs)
   -A, --show-annexed-size             Use apparent size of git-annex'ed files in case files are not present locally (real usage is zero)
@@ -83,6 +86,7 @@ Flags:
       --si                            Show sizes with decimal SI prefixes (kB, MB, GB) instead of binary prefixes (KiB, MiB, GiB)
       --since string                  Include files with mtime >= WHEN. WHEN accepts RFC3339 timestamp (e.g., 2025-08-11T01:00:00-07:00) or date only YYYY-MM-DD (calendar-day compare; includes the whole day)
   -s, --summarize                     Show only a total in non-interactive mode
+      --threshold string              Bucket objects smaller than this size into a '<smaller objects>' rollup on export. Binary units: 10M, 500K, 2G, or plain bytes. 0 = keep everything. (default "0")
   -t, --top int                       Show only top X largest files in non-interactive mode
   -T, --type strings                  File types to include (e.g., --type yaml,json)
       --until string                  Include files with mtime <= WHEN. WHEN accepts RFC3339 timestamp or date only YYYY-MM-DD
@@ -126,6 +130,9 @@ Basic list of actions in interactive mode (show help modal for more):
 
     gdu -o- / | gzip -c >report.json.gz   # write all info to JSON file for later analysis
     zcat report.json.gz | gdu -f-         # read analysis from file
+    gdu -o- --threshold 10M /             # export, bucketing objects < 10 MiB into "<smaller objects>"
+    gdu -o scan.parquet --threshold 10M / # export a compact Parquet snapshot (query later with DuckDB)
+    gdu -f scan.parquet                   # browse a previously exported Parquet snapshot
 
     gdu --db=tmp.badger /                 # use persistent key-value storage for saving analysis data
     gdu --db=tmp.db /                     # use persistent SQLite storage for saving analysis data
@@ -141,7 +148,9 @@ In non-interactive mode (and without `--top` and `--depth` flags), gdu uses a me
 This means memory usage stays constant regardless of how large the scanned directory tree is.
 When `--top` or `--depth` flags are used, the full directory tree is built in memory as in interactive mode.
 
-Export mode (flag `-o`) outputs all usage data as JSON, which can be later opened using the `-f` flag.
+Export mode (flag `-o`) outputs all usage data as JSON (or Parquet with `--output-format parquet` /
+a `.parquet` output file), which can be later opened using the `-f` flag. The input format is detected
+automatically.
 
 Hard links are counted only once.
 
@@ -240,6 +249,23 @@ gdu --db analysis.sqlite /        # saves analysis data to SQLite database
 gdu --db analysis.badger /        # saves analysis data to BadgerDB
 gdu -r --db analysis.sqlite /     # reads saved data, does not run analysis again
 ```
+
+## Saving scan snapshots
+
+Gdu can automatically save every completed scan as a compact Parquet snapshot, so you can track disk
+usage over time and query the history with tools like [DuckDB](https://duckdb.org/).
+
+```
+gdu --save-scan /                       # scan as usual; also write a snapshot
+gdu --save-scan --scans-dir ~/snaps /   # use a custom snapshot directory
+gdu -n --save-scan /                     # works in non-interactive mode too (e.g. from cron)
+```
+
+`--save-scan` does not change what gdu shows; it just writes
+`scan_<timestamp>.parquet` into the scans directory (default `$HOME/.gdu-scans`) as the scan
+completes. Snapshots use a default rollup threshold of 10M (objects smaller than that are grouped
+into a `<smaller objects>` row); override it with `--threshold`. Reload any snapshot with
+`gdu -f <snapshot>.parquet`.
 
 ## Running tests
 

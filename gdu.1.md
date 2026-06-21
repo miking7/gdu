@@ -72,6 +72,8 @@ non-interactive mode
 
 **-s**, **\--summarize**\[=false\] Show only a total in non-interactive mode
 
+**\--threshold**\[="0"\] Bucket objects smaller than this size into a '<smaller objects>' rollup on export. Binary units: 10M, 500K, 2G, or plain bytes. 0 = keep everything.
+
 **-t**, **\--top**\[=0\] Show only top X largest files in non-interactive mode
 
 **-d**, **\--show-disks**\[=false\] Show all mounted disks
@@ -102,9 +104,15 @@ non-interactive mode
 
 **\--no-view-file**\[=false\] Do not allow viewing file contents
 
-**-f**, **\--input-file** Import analysis from JSON file. If the file is \"-\", read from standard input.
+**-f**, **\--input-file** Import analysis from JSON or Parquet file (format auto-detected). If the file is \"-\", read from standard input.
 
 **-o**, **\--output-file** Export all info into file as JSON. If the file is \"-\", write to standard output.
+
+**\--output-format** Export format: json (default) or parquet. Inferred from the -o file extension when unset.
+
+**\--save-scan**\[=false\] Save each completed scan as a Parquet snapshot in the scans directory (default threshold 10M).
+
+**\--scans-dir** Directory for --save-scan snapshots (default $HOME/.gdu-scans).
 
 **\--config-file**=\"$HOME/.gdu.yaml\"             Read config from file
 

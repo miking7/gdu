@@ -50,6 +50,53 @@ func TestAnalyzePathWithProgress(t *testing.T) {
 	assert.Contains(t, reportOutput.String(), `"name":"nested"`)
 }
 
+func TestAnalyzePathWithThreshold(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	output := bytes.NewBuffer(make([]byte, 10))
+	reportOutput := bytes.NewBuffer(make([]byte, 10))
+
+	ui := CreateExportUI(output, reportOutput, false, false, false)
+	ui.SetIgnoreDirPaths([]string{"/xxx"})
+	ui.SetExportThreshold(1 << 20) // 1 MiB collapses the tiny test tree into a rollup
+	err := ui.AnalyzePath("test_dir", nil)
+	assert.Nil(t, err)
+	err = ui.StartUILoop()
+	assert.Nil(t, err)
+
+	out := reportOutput.String()
+	// "smaller objects" survives escaping ('<'/'>' are escaped, the words are not).
+	assert.Contains(t, out, "smaller objects")
+	// Everything sub-threshold collapsed, so the individual entries are gone.
+	assert.NotContains(t, out, `"name":"nested"`)
+	assert.NotContains(t, out, `"name":"file2"`)
+}
+
+func TestExportToParquetFile(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	f, err := os.OpenFile("output.parquet", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	assert.Nil(t, err)
+	defer func() { os.Remove("output.parquet") }()
+
+	output := bytes.NewBuffer(make([]byte, 10))
+	ui := CreateExportUI(output, f, false, false, false)
+	ui.SetOutputFormat("parquet")
+	ui.SetIgnoreDirPaths([]string{"/xxx"})
+	err = ui.AnalyzePath("test_dir", nil)
+	assert.Nil(t, err)
+	assert.Nil(t, ui.StartUILoop())
+
+	data, err := os.ReadFile("output.parquet")
+	assert.Nil(t, err)
+	// A valid Parquet file is framed by the "PAR1" magic at both ends.
+	assert.Greater(t, len(data), 8)
+	assert.Equal(t, "PAR1", string(data[:4]))
+	assert.Equal(t, "PAR1", string(data[len(data)-4:]))
+}
+
 func TestShowDevices(t *testing.T) {
 	output := bytes.NewBuffer(make([]byte, 10))
 	reportOutput := bytes.NewBuffer(make([]byte, 10))

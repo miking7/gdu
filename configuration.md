@@ -24,6 +24,28 @@ Import analysis from JSON file
 
 Export all info into file as JSON
 
+#### `export-threshold`
+
+Bucket objects smaller than this size into a `<smaller objects>` rollup row on export, shrinking the
+exported file while preserving exact recursive totals. Accepts binary units (`10M`, `500K`, `2G`) or a
+plain byte count; `0` (the default) keeps everything. Applies to all export formats.
+
+#### `output-format`
+
+Export format used with `output-file`: `json` (the default) or `parquet`. When unset, the format is
+inferred from the output file extension (`.parquet` selects Parquet). Parquet snapshots are
+zstd-compressed and one flat row per entry, ready to query with DuckDB.
+
+#### `save-scan`
+
+When `true`, every completed scan is also written as a `scan_<timestamp>.parquet` snapshot in the
+scans directory. It does not change what gdu displays. Snapshots use a default rollup threshold of
+10M unless `export-threshold` is set.
+
+#### `scans-dir`
+
+Directory for `save-scan` snapshots. Defaults to `$HOME/.gdu-scans` (created if missing).
+
 #### `ignore-dirs`
 
 Paths to ignore (separated by comma). Can be absolute (like `/proc`) or relative to the current working directory (like `node_modules`). Default values are [/proc,/dev,/sys,/run].

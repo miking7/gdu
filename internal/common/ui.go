@@ -21,6 +21,10 @@ type UI struct {
 	ShowApparentSize      bool
 	ShowRelativeSize      bool
 	FilteringFiles        bool
+	ExportThreshold       int64
+	SaveScanEnabled       bool
+	SaveScanDir           string
+	SaveScanThreshold     int64
 }
 
 // SetAnalyzer sets analyzer instance
@@ -47,6 +51,20 @@ func (ui *UI) SetTimeFilter(timeFilter TimeFilter) {
 // SetArchiveBrowsing sets whether browsing of zip/jar archives is enabled
 func (ui *UI) SetArchiveBrowsing(v bool) {
 	ui.Analyzer.SetArchiveBrowsing(v)
+}
+
+// SetExportThreshold sets the size threshold (in bytes) below which objects are
+// bucketed into a "<smaller objects>" rollup on export. 0 disables the rollup.
+func (ui *UI) SetExportThreshold(v int64) {
+	ui.ExportThreshold = v
+}
+
+// SetSaveScan enables auto-saving each completed scan to dir as a Parquet
+// snapshot, bucketing objects below thresholdBytes.
+func (ui *UI) SetSaveScan(dir string, thresholdBytes int64) {
+	ui.SaveScanEnabled = true
+	ui.SaveScanDir = dir
+	ui.SaveScanThreshold = thresholdBytes
 }
 
 // binary multiplies prefixes (IEC)

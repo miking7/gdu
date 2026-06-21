@@ -17,11 +17,13 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/dundee/gdu/v5/build"
 	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
 	"github.com/dundee/gdu/v5/pkg/fs"
+	"github.com/dundee/gdu/v5/pkg/parquet"
 	"github.com/dundee/gdu/v5/report"
 )
 
@@ -102,6 +104,12 @@ func (ui *UI) AnalyzePath(path string, parentDir fs.Item) error {
 			ui.topDir.UpdateStats(ui.linkedItems)
 		}
 
+		// Persist a snapshot of the just-completed top-level scan. This is a
+		// background side effect and never alters the UI.
+		if parentDir == nil && ui.SaveScanEnabled {
+			ui.saveScanSnapshot(ui.topDir)
+		}
+
 		ui.app.QueueUpdateDraw(func() {
 			ui.currentDir = currentDir
 			ui.showDir()
@@ -114,6 +122,15 @@ func (ui *UI) AnalyzePath(path string, parentDir fs.Item) error {
 	}()
 
 	return nil
+}
+
+func (ui *UI) saveScanSnapshot(tree fs.Item) {
+	path, err := parquet.SaveSnapshot(tree, ui.SaveScanDir, ui.SaveScanThreshold, time.Now())
+	if err != nil {
+		log.Printf("save-scan failed: %s", err)
+		return
+	}
+	log.Printf("Saved scan snapshot to %s", path)
 }
 
 // ReadAnalysis reads analysis report from JSON file
