@@ -93,7 +93,7 @@ gdu can export/import scans as Apache Parquet and auto-archive them for trend an
   `0` = keep everything (current behavior).
 - **Flows**: `-o x.parquet` / `--output-format parquet` export ([report/export.go](report/export.go)),
   `-f x.parquet` import dispatched by the `PAR1` magic in [report/import.go](report/import.go), and
-  `--save-scan` auto-archive to `$HOME/.gdu-scans/scan_<ts>.parquet`.
+  `--save-scan` auto-archive to `$HOME/.gdu-scans/scan_<ts>_<root>.parquet`.
 - **`--save-scan` hooks at each UI's scan-completion point, not at the app level** — the TUI scans
   *asynchronously* (needs its event loop running for `QueueUpdateDraw`), so there's no app-level moment
   where the tree is ready before the UI starts. Config lives on `common.UI` (`SetSaveScan`) kept free of
@@ -113,8 +113,12 @@ gdu can export/import scans as Apache Parquet and auto-archive them for trend an
   `parquet.NewGenericReader` building the tree incrementally; `report.ReadAnalysis` streams straight
   from the `*os.File`. `--save-scan` calls `runtime.GC()` before writing so the snapshot reuses freed
   scan garbage. Don't reintroduce all-rows buffering, per-dir sorting, or a global sort here.
-- **Snapshot filenames use local time** (`scan_<YYYYMMDDTHHMMSS>.parquet`, collision-suffixed); the
-  `scan_ts` *column* stays UTC. **sudo-safe output:** [internal/common/ownership.go](internal/common/ownership.go)
+- **Snapshot filenames use local time** with a scan-root slug
+  (`scan_<YYYYMMDDTHHMMSS>_<root>.parquet`, collision-suffixed) — `rootSlug()` in
+  [pkg/parquet/snapshot.go](pkg/parquet/snapshot.go) lower-cases the absolute root and collapses any
+  non-`[a-z0-9]` run to `_` (`/`→`root`, `/Volumes/SD`→`volumes_sd`), capped at 60 chars. The slug is
+  cosmetic; the lossless `scan_root` *column* is the source of truth and the fixed-width timestamp
+  still leads so lexical sort stays chronological. The `scan_ts` *column* stays UTC. **sudo-safe output:** [internal/common/ownership.go](internal/common/ownership.go)
   resolves the invoking user (`SUDO_USER`/`UID`/`GID`) for the default scans-dir and `chown`s every
   written file back (snapshots, `-o` exports, TUI export). `pkg/parquet`→`internal/common` is acyclic.
 

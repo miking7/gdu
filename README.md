@@ -268,8 +268,10 @@ gdu -n --save-scan /                     # works in non-interactive mode too (e.
 ```
 
 `--save-scan` does not change what gdu shows; it just writes
-`scan_<timestamp>.parquet` (local time) into the scans directory (default `$HOME/.gdu-scans`) as the
-scan completes. Snapshots use a default rollup threshold of 10M (objects smaller than that are grouped
+`scan_<timestamp>_<root>.parquet` (local time) into the scans directory (default `$HOME/.gdu-scans`)
+as the scan completes. The `<root>` suffix is a lower-case, filesystem-safe slug of the scanned path
+so the file says what it covers at a glance — e.g. `scan_20260622T204452_volumes_sd.parquet` for
+`/Volumes/SD`, `…_users_michael.parquet` for `/Users/michael`, and `…_root.parquet` for `/`. Snapshots use a default rollup threshold of 10M (objects smaller than that are grouped
 into a `<smaller objects>` row); override it with `--threshold`. Reload any snapshot with
 `gdu -f <snapshot>.parquet`.
 

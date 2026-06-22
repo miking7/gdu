@@ -3,6 +3,7 @@ package parquet
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,7 +14,36 @@ import (
 func TestSnapshotFileName(t *testing.T) {
 	// Local time (the filename is human-facing); the scan_ts column stays UTC.
 	now := time.Date(2026, 6, 19, 5, 30, 15, 0, time.Local)
-	assert.Equal(t, "scan_20260619T053015.parquet", SnapshotFileName(now))
+	assert.Equal(t, "scan_20260619T053015_users_michael.parquet",
+		SnapshotFileName(now, "/Users/michael"))
+}
+
+func TestRootSlug(t *testing.T) {
+	cases := []struct {
+		root, want string
+	}{
+		{"/", "root"},
+		{"", "root"},
+		{"///", "root"},
+		{"/Volumes/SD", "volumes_sd"},
+		{"/Users/michael", "users_michael"},
+		{"/Users/michael/", "users_michael"},        // trailing separator trimmed
+		{"/Volumes/My Disk!", "volumes_my_disk"},    // spaces+punctuation collapse
+		{"/Volumes/SD-Card_2", "volumes_sd_card_2"}, // digits and dashes
+		{`C:\Users\me`, "c_users_me"},               // Windows drive + backslashes
+		{"/srv/data//logs", "srv_data_logs"},        // doubled separator collapses
+		{"/Médiá", "m_di"},                          // non-ASCII degrades to "_", trimmed
+	}
+	for _, c := range cases {
+		assert.Equalf(t, c.want, rootSlug(c.root), "rootSlug(%q)", c.root)
+	}
+}
+
+func TestRootSlugCapsLength(t *testing.T) {
+	root := "/" + strings.Repeat("abcdefghij/", 20) // 220 chars of path
+	slug := rootSlug(root)
+	assert.LessOrEqual(t, len(slug), rootSlugMaxLen)
+	assert.NotEmpty(t, slug)
 }
 
 func TestSaveSnapshotRoundTrip(t *testing.T) {
@@ -23,7 +53,8 @@ func TestSaveSnapshotRoundTrip(t *testing.T) {
 
 	path, err := SaveSnapshot(root, dir, 0, now)
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(dir, "scan_20260619T053000.parquet"), path)
+	// Root is /tmp/root, so the filename carries the "tmp_root" slug.
+	assert.Equal(t, filepath.Join(dir, "scan_20260619T053000_tmp_root.parquet"), path)
 
 	info, err := os.Stat(path)
 	require.NoError(t, err)
@@ -48,8 +79,8 @@ func TestSaveSnapshotCollision(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotEqual(t, first, second)
-	assert.Equal(t, filepath.Join(dir, "scan_20260619T053000.parquet"), first)
-	assert.Equal(t, filepath.Join(dir, "scan_20260619T053000_1.parquet"), second)
+	assert.Equal(t, filepath.Join(dir, "scan_20260619T053000_tmp_root.parquet"), first)
+	assert.Equal(t, filepath.Join(dir, "scan_20260619T053000_tmp_root_1.parquet"), second)
 
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)

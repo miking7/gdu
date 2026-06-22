@@ -38,9 +38,11 @@ zstd-compressed and one flat row per entry, ready to query with DuckDB.
 
 #### `save-scan`
 
-When `true`, every completed scan is also written as a `scan_<timestamp>.parquet` snapshot in the
-scans directory. It does not change what gdu displays. Snapshots use a default rollup threshold of
-10M unless `export-threshold` is set.
+When `true`, every completed scan is also written as a `scan_<timestamp>_<root>.parquet` snapshot in
+the scans directory, where `<root>` is a lower-case, filesystem-safe slug of the scanned path (e.g.
+`scan_20260622T204452_volumes_sd.parquet` for `/Volumes/SD`, or `…_root.parquet` for `/`). It does not
+change what gdu displays. Snapshots use a default rollup threshold of 10M unless `export-threshold` is
+set.
 
 #### `scans-dir`
 

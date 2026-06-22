@@ -17,7 +17,8 @@ Export, auto-archive, and re-import scans as [Apache Parquet](https://parquet.ap
 gdu's existing ncdu-style JSON:
 
 - `gdu -o scan.parquet /` (or `gdu --output-format parquet -o- /`) — export one snapshot.
-- `gdu --save-scan /` — auto-save every completed scan to `~/.gdu-scans/scan_<timestamp>.parquet`.
+- `gdu --save-scan /` — auto-save every completed scan to `~/.gdu-scans/scan_<timestamp>_<root>.parquet`
+  (the `<root>` suffix is a lower-case slug of the scanned path, e.g. `…_volumes_sd.parquet`).
 - `gdu -f scan.parquet` — browse a snapshot in the TUI/CLI; JSON vs Parquet is auto-detected.
 
 Snapshots are written and read with the pure-Go [`parquet-go`](https://github.com/parquet-go/parquet-go)
