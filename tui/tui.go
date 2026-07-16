@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"regexp"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -52,6 +53,7 @@ type UI struct {
 	remover                 func(fs.Item, fs.Item) error
 	emptier                 func(fs.Item, fs.Item) error
 	exec                    func(argv0 string, argv []string, envv []string) error
+	reexec                  func(argv []string, envv []string) error
 	changeCwdFn             func(string) error
 	linkedItems             fs.HardLinkedItems
 	ignoredRows             map[int]struct{}
@@ -73,6 +75,7 @@ type UI struct {
 	defaultSortBy           string
 	defaultSortOrder        string
 	exportName              string
+	configFilePath          string
 	devices                 []*device.Device
 	selectedTextColor       tcell.Color
 	selectedBackgroundColor tcell.Color
@@ -181,6 +184,17 @@ type UI struct {
 	autoCompactRunning atomic.Bool
 	compactingLabel    *tview.TextView
 	quitOnce           sync.Once
+	// launcher (tui/launcher.go) is the interactive front door. launcher
+	// holds the current launcher screen (nil when it isn't shown; the pointer
+	// also guards its async fill). usingLauncher stays true once the launcher is
+	// the navigation home, so left-arrow at a live tree's top returns there
+	// rather than to the standalone device list. launcherBaseIgnore is the
+	// user's configured --ignore-dirs-pattern captured once at OpenLauncher, so
+	// a folder scan can restore it after a disk scan overwrote it with that
+	// disk's nested-mount ignores.
+	launcher           *launcherState
+	usingLauncher      bool
+	launcherBaseIgnore *regexp.Regexp
 }
 
 type deleteQueueItem struct {
@@ -225,6 +239,7 @@ func CreateUI(
 		remover:                 remove.ItemFromDir,
 		emptier:                 remove.EmptyFileFromDir,
 		exec:                    Execute,
+		reexec:                  reexecSudo,
 		linkedItems:             make(fs.HardLinkedItems, 10),
 		selectedTextColor:       tview.Styles.TitleColor,
 		selectedBackgroundColor: tview.Styles.MoreContrastBackgroundColor,

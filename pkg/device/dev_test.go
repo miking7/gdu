@@ -72,6 +72,24 @@ func TestSortByUsedSize(t *testing.T) {
 	assert.Equal(t, "xxx", devices[2].Name)
 }
 
+func TestHideSystemVolumes(t *testing.T) {
+	devices := Devices{
+		{MountPoint: "/"},
+		{MountPoint: "/System/Volumes/Data"},
+		{MountPoint: "/System/Volumes/VM"},
+		{MountPoint: "/Volumes/SD"},
+		{MountPoint: "/nix"},
+	}
+	got := HideSystemVolumes(devices)
+
+	var mounts []string
+	for _, d := range got {
+		mounts = append(mounts, d.MountPoint)
+	}
+	assert.Equal(t, []string{"/", "/Volumes/SD", "/nix"}, mounts,
+		"only /System/Volumes/* is hidden; /, /Volumes/*, and /nix survive")
+}
+
 func TestForPath(t *testing.T) {
 	devs := Devices{
 		{MountPoint: "/"},

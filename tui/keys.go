@@ -18,8 +18,9 @@ func (ui *UI) keyPressed(key *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 
-	if ui.pages.HasPage("file") || ui.pages.HasPage("export") || ui.pages.HasPage("snapshotpicker") {
-		return key // send event to primitive (the picker/form handles its own keys)
+	if ui.pages.HasPage("file") || ui.pages.HasPage("export") || ui.pages.HasPage("snapshotpicker") ||
+		ui.pages.HasPage(launcherPage) {
+		return key // send event to primitive (the launcher/picker/form handles its own keys)
 	}
 	if ui.filtering || ui.typeFiltering {
 		return key
@@ -518,13 +519,23 @@ func (ui *UI) handleLeft() {
 		if !ui.viewIsLive() || ui.scanning {
 			return
 		}
-		if ui.devices != nil {
+		switch {
+		case ui.browseParentDirs:
+			// browse-parent-dirs is an explicit opt-in to walk above the launch
+			// dir, so it wins over the launcher/device-list fallback. (This is a
+			// deliberate change from upstream, where the device list took the
+			// top-of-tree left-arrow ahead of browse-parent-dirs; the launcher
+			// era favors the user's explicit up-navigation choice.)
+			ui.analyzeParentOfTopDir()
+		case ui.usingLauncher:
+			// The launcher is this session's home: left-arrow at the top
+			// of a live tree returns there, not to the standalone device list.
+			ui.returnToLauncher()
+		case ui.devices != nil:
 			ui.currentDir = nil
 			if err := ui.ListDevices(ui.getter); err != nil {
 				ui.showErr("Error listing devices", err)
 			}
-		} else if ui.browseParentDirs {
-			ui.analyzeParentOfTopDir()
 		}
 		return
 	}

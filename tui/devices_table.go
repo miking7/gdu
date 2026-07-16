@@ -1,10 +1,6 @@
 package tui
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
-
 	"github.com/rivo/tview"
 
 	"github.com/dundee/gdu/v5/pkg/device"
@@ -19,10 +15,6 @@ import (
 // Used, Used part, Free, Mount point). The launcher inserts a Snapshot column
 // before Mount point, shifting the mount column right by one.
 const deviceMountCol = 5
-
-// launcherFallbackWidth is the assumed terminal width when the screen size
-// is unknown (e.g. under the simulation screen in tests).
-const launcherFallbackWidth = 100
 
 // Device-table palette (shared so the launcher, classic -d page, and the
 // snapshot pickers never drift): blue for names/mount points, amber for sizes.
@@ -104,26 +96,4 @@ func (ui *UI) dimTag() string {
 		return "[gray::d]"
 	}
 	return ""
-}
-
-// homeDir returns the user's home directory, or "" when it can't be determined.
-func homeDir() string {
-	if h, err := os.UserHomeDir(); err == nil {
-		return h
-	}
-	return ""
-}
-
-// abbrevHome renders p with a leading ~ when it is at or under home, for display.
-func abbrevHome(p, home string) string {
-	if home == "" {
-		return p
-	}
-	if p == home {
-		return "~"
-	}
-	if strings.HasPrefix(p, home+string(filepath.Separator)) {
-		return "~" + p[len(home):]
-	}
-	return p
 }

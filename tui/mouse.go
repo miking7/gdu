@@ -11,6 +11,9 @@ func (ui *UI) onMouse(event *tcell.EventMouse, action tview.MouseAction) (*tcell
 		return nil, action
 	}
 
+	if ev, ac, handled := ui.launcherMouse(event, action); handled {
+		return ev, ac
+	}
 	if ui.pages.HasPage("confirm") ||
 		ui.pages.HasPage(scanQuitPage) ||
 		ui.pages.HasPage(autoCompactQuitPage) ||

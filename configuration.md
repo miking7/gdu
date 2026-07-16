@@ -212,7 +212,18 @@ Delete items in parallel, which might increase the speed of deletion
 
 #### `browse-parent-dirs`
 
-Allow navigating above the launch directory by pressing the left arrow key. When enabled, pressing left at the top-level directory will rescan and open its parent directory. Disabled by default.
+Allow navigating above the launch directory by pressing the left arrow key. When enabled, pressing left at the top-level directory will rescan and open its parent directory. Disabled by default. (This opt-in takes precedence over the launcher's left-arrow-returns-here behavior.)
+
+#### `launcher`
+
+Open the interactive **launcher** — the folder you're in, its disk, your other disks, and your
+newest snapshot of each — instead of scanning immediately (**default `true`**). Bare `gdu`,
+`gdu <path>`, and interactive `gdu -d` all open it; `Enter` scans the selected row, `s` opens its
+latest snapshot without scanning, `S` picks a specific one. When gdu isn't running as root, `R`
+restarts it under `sudo` (and scanning the whole root volume `/` confirms this first). Set
+`launcher: false` (or pass `--launcher=false`) to restore upstream scan-immediately behavior. The launcher is always skipped
+when a specific source or target is named — `-f`, `--snapshot`, `--read-from-storage`, `--db` — and
+in non-interactive mode.
 
 
 #### `style.selected-row.text-color`
