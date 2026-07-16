@@ -52,6 +52,62 @@ func TestInteractiveFlagCanBeSet(t *testing.T) {
 	}
 }
 
+func TestWriteConfigTargetFreshHome(t *testing.T) {
+	home := t.TempDir()
+
+	path, err := writeConfigTarget(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".config", "gdu", "gdu.yaml")
+	if path != want {
+		t.Errorf("fresh home: got %q, want %q", path, want)
+	}
+	// The XDG directory must exist afterwards so the write itself succeeds.
+	if _, err := os.Stat(filepath.Dir(want)); err != nil {
+		t.Errorf("expected config dir to be created: %v", err)
+	}
+}
+
+func TestWriteConfigTargetPrefersExistingXDG(t *testing.T) {
+	home := t.TempDir()
+	xdg := filepath.Join(home, ".config", "gdu", "gdu.yaml")
+	legacy := filepath.Join(home, ".gdu.yaml")
+	if err := os.MkdirAll(filepath.Dir(xdg), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Both exist: the XDG path (read first) wins.
+	for _, p := range []string{xdg, legacy} {
+		if err := os.WriteFile(p, []byte("log-file: /dev/null\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	path, err := writeConfigTarget(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != xdg {
+		t.Errorf("got %q, want the existing XDG config %q", path, xdg)
+	}
+}
+
+func TestWriteConfigTargetKeepsLegacyInPlace(t *testing.T) {
+	home := t.TempDir()
+	legacy := filepath.Join(home, ".gdu.yaml")
+	if err := os.WriteFile(legacy, []byte("log-file: /dev/null\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := writeConfigTarget(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != legacy {
+		t.Errorf("got %q, want the existing legacy config %q", path, legacy)
+	}
+}
+
 func TestInitConfigMalformedSystemConfig(t *testing.T) {
 	// Write invalid YAML to a temp file and point systemConfigPath at it.
 	tmp := filepath.Join(t.TempDir(), "gdu.yaml")

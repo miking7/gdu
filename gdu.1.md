@@ -108,9 +108,9 @@ non-interactive mode
 
 **-o**, **\--output-file** Export all info into file as JSON. If the file is \"-\", write to standard output.
 
-**\--config-file**=\"$HOME/.gdu.yaml\"             Read config from file
+**\--config-file** Read config from file (default is ~/.config/gdu/gdu.yaml, or ~/.gdu.yaml if that exists)
 
-**\--write-config**\[=false\] Write current configuration to file (default is $HOME/.gdu.yaml)
+**\--write-config**\[=false\] Write current configuration to file (the config that would be read: an existing user config, else ~/.config/gdu/gdu.yaml, creating the directory)
 
 **\--enable-profiling**\[=false\] Enable collection of profiling data and provide it on http://localhost:6060/debug/pprof/
 

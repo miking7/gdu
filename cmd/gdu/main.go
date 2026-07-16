@@ -46,7 +46,7 @@ However HDDs work as well, but the performance gain is not so huge.
 func init() {
 	af = &app.Flags{Style: app.Style{ProgressModal: app.ProgressModalOpts{ShowDiskProgressBar: true}}}
 	flags := rootCmd.Flags()
-	flags.StringVar(&af.CfgFile, "config-file", "", "Read config from file (default is $HOME/.gdu.yaml)")
+	flags.StringVar(&af.CfgFile, "config-file", "", "Read config from file (default is ~/.config/gdu/gdu.yaml, or ~/.gdu.yaml if that exists)")
 	flags.StringVarP(&af.LogFile, "log-file", "l", "/dev/null", "Path to a logfile")
 	flags.StringVarP(&af.OutputFile, "output-file", "o", "", "Export all info into file as JSON")
 	flags.StringVarP(&af.InputFile, "input-file", "f", "", "Import analysis from JSON file")
@@ -101,7 +101,9 @@ func init() {
 	flags.BoolVar(&af.NoViewFile, "no-view-file", false, "Do not allow viewing file contents")
 	flags.BoolVar(&af.NoSpawnShell, "no-spawn-shell", false, "Do not allow spawning shell")
 	flags.BoolVar(&af.NoConfirmQuit, "no-confirm-quit", false, "Do not ask for confirmation before quitting after a long scan")
-	flags.BoolVar(&af.WriteConfig, "write-config", false, "Write current configuration to file (default is $HOME/.gdu.yaml)")
+	flags.BoolVar(&af.WriteConfig, "write-config", false,
+		"Write current configuration to file (the config that would be read: an existing "+
+			"user config, else ~/.config/gdu/gdu.yaml, creating the directory)")
 	flags.StringVar(
 		&af.Since, "since", "",
 		"Include files with mtime >= WHEN. WHEN accepts RFC3339 timestamp (e.g., 2025-08-11T01:00:00-07:00) "+
@@ -189,13 +191,63 @@ func setDefaultConfigFilePath() {
 		return
 	}
 
-	path := filepath.Join(home, ".config", "gdu", "gdu.yaml")
-	if _, err := os.Stat(path); err == nil {
-		af.CfgFile = path
+	xdgPath, legacyPath := userConfigPaths(home)
+	if _, err := os.Stat(xdgPath); err == nil {
+		af.CfgFile = xdgPath
 		return
 	}
 
-	af.CfgFile = filepath.Join(home, ".gdu.yaml")
+	af.CfgFile = legacyPath
+}
+
+// userConfigPaths returns the two user-config candidates, preferred first:
+// the XDG path and the legacy home dotfile. It is the single source of these
+// locations for both the read path (setDefaultConfigFilePath) and the write
+// path (writeConfigTarget) — the two must never disagree, or --write-config
+// would write a file gdu never reads back.
+func userConfigPaths(home string) (xdgPath, legacyPath string) {
+	return filepath.Join(home, ".config", "gdu", "gdu.yaml"), filepath.Join(home, ".gdu.yaml")
+}
+
+// writeConfigTarget resolves where --write-config writes when --config-file is
+// not given: the user config that would be read — ~/.config/gdu/gdu.yaml when it
+// exists, then legacy ~/.gdu.yaml — else the XDG path, creating its directory.
+func writeConfigTarget(home string) (string, error) {
+	xdgPath, legacyPath := userConfigPaths(home)
+	if _, err := os.Stat(xdgPath); err == nil {
+		return xdgPath, nil
+	}
+	if _, err := os.Stat(legacyPath); err == nil {
+		return legacyPath, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(xdgPath), 0o700); err != nil {
+		return "", fmt.Errorf("creating config directory: %w", err)
+	}
+	return xdgPath, nil
+}
+
+// writeConfig writes the current configuration to the file it would be read
+// back from: an explicit --config-file verbatim, else the writeConfigTarget
+// resolution.
+func writeConfig(command *cobra.Command) error {
+	data, err := yaml.Marshal(af)
+	if err != nil {
+		return fmt.Errorf("error marshaling config file: %w", err)
+	}
+	path := af.CfgFile
+	if !command.Flags().Changed("config-file") {
+		home, herr := os.UserHomeDir()
+		if herr != nil {
+			return fmt.Errorf("determining home dir for config: %w", herr)
+		}
+		if path, err = writeConfigTarget(home); err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("error writing config file %s: %w", path, err)
+	}
+	return nil
 }
 
 func runE(command *cobra.Command, args []string) error {
@@ -206,16 +258,8 @@ func runE(command *cobra.Command, args []string) error {
 	)
 
 	if af.WriteConfig {
-		data, err := yaml.Marshal(af)
-		if err != nil {
-			return fmt.Errorf("error marshaling config file: %w", err)
-		}
-		if af.CfgFile == "" {
-			setDefaultConfigFilePath()
-		}
-		err = os.WriteFile(af.CfgFile, data, 0o600)
-		if err != nil {
-			return fmt.Errorf("error writing config file %s: %w", af.CfgFile, err)
+		if err := writeConfig(command); err != nil {
+			return err
 		}
 	}
 

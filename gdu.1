@@ -125,11 +125,12 @@ If the file is \[dq]\-\[dq], read from standard input.
 JSON.
 If the file is \[dq]\-\[dq], write to standard output.
 .PP
-\f[B]\-\-config\-file\f[R]=\[dq]$HOME/.gdu.yaml\[dq] Read config from
-file
+\f[B]\-\-config\-file\f[R] Read config from file (default is
+\[ti]/.config/gdu/gdu.yaml, or \[ti]/.gdu.yaml if that exists)
 .PP
 \f[B]\-\-write\-config\f[R][=false] Write current configuration to file
-(default is $HOME/.gdu.yaml)
+(the config that would be read: an existing user config, else
+\[ti]/.config/gdu/gdu.yaml, creating the directory)
 .PP
 \f[B]\-\-enable\-profiling\f[R][=false] Enable collection of profiling
 data and provide it on http://localhost:6060/debug/pprof/
