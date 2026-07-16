@@ -12,6 +12,18 @@ Pretty fast disk usage analyzer written in Go.
 Gdu is intended primarily for SSD disks where it can fully utilize parallel processing.
 However HDDs work as well, but the performance gain is not so huge.
 
+> **This is a fork of [dundee/gdu](https://github.com/dundee/gdu), kept upstreamable.** It adds
+> **disk usage with history**: every completed scan is archived as a Parquet snapshot, and the TUI
+> can diff against, step through, and reopen any of them. When the disk is mysteriously full again:
+> scan it, press `S`, pick the snapshot from last month, press Enter — every row now carries a
+> signed Δ, sorted so the biggest grower is on top. Follow the ▲ trail downward to the culprit.
+> Two keys from scan to answer. (`[`/`]` time-travel the view itself; `O` opens any snapshot;
+> snapshot views are read-only with a guided way back to live.) Bare `gdu` opens a **launcher** —
+> the folder you're in, its disk, your other disks, and your snapshots of each — instead of a blind
+> scan (`launcher: false` restores scan-immediately).
+> See **[FORK.md](./FORK.md)** for the journeys and reference, and
+> **[docs/scheduling.md](./docs/scheduling.md)** for scheduling periodic scans on macOS/Linux.
+
 [![asciicast](https://asciinema.org/a/382738.svg)](https://asciinema.org/a/382738)
 
 <a href="https://repology.org/project/gdu/versions">
