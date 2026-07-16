@@ -1,0 +1,43 @@
+# GoReleaser config for this fork — publishes plain downloadable binaries for the
+# common macOS + Linux platforms only (none of upstream's Docker/winget/snap/AUR
+# packaging). Runs in CI on tag push: see .github/workflows/release.yml.
+#
+#   Validate config:  goreleaser check
+#   Local dry run:    goreleaser release --snapshot --clean   (artifacts in dist/)
+version: 2
+
+project_name: gdu
+
+builds:
+  - main: ./cmd/gdu
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+      - -pgo=default.pgo
+    ldflags:
+      - -s -w
+      - -X github.com/dundee/gdu/v5/build.Version={{ .Version }}
+      - -X github.com/dundee/gdu/v5/build.Time={{ .Date }}
+      - -X github.com/dundee/gdu/v5/build.User=goreleaser
+
+archives:
+  # Unversioned names keep the "latest" URLs stable across releases, e.g.
+  # https://github.com/miking7/gdu/releases/latest/download/gdu_darwin_arm64.tar.gz
+  - name_template: '{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}'
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github-native # same auto-generated notes as upstream's generate_release_notes
+
+release:
+  draft: true # review the assets on GitHub, then click Publish
+  prerelease: false # v<base>-parquet.N tags are real releases despite the semver suffix
