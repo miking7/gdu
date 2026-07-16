@@ -17,6 +17,10 @@ const (
 	SortByItemCount
 	SortByMtime
 	SortByApparentSize
+	// SortByNone yields items in their stored order, skipping both the sort and
+	// the defensive slice copy a sort requires. Use it on hot paths that don't
+	// care about order (or re-sort later), to avoid per-directory allocations.
+	SortByNone
 )
 
 // SortOrder represents the sort direction

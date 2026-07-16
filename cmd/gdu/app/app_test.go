@@ -507,6 +507,41 @@ func TestAnalyzePathWithExportAndSummarize(t *testing.T) {
 	assert.NotContains(t, string(content), `"name":"nested"`)
 }
 
+// TestExportToParquetRejectsScopeFilters asserts a Parquet export combined with
+// --top/--depth/--summarize fails at startup: a snapshot's manifest claims a
+// complete scan, so a scope-filtered file must not be written under that
+// identity. The rejection fires before the output file is opened or anything is
+// scanned.
+func TestExportToParquetRejectsScopeFilters(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+	defer func() {
+		os.Remove("output.parquet")
+		os.Remove("out.bin")
+	}()
+
+	cases := []struct {
+		name  string
+		flags *Flags
+	}{
+		{"top", &Flags{LogFile: "/dev/null", OutputFile: "output.parquet", Top: 5}},
+		{"depth", &Flags{LogFile: "/dev/null", OutputFile: "output.parquet", Depth: 2}},
+		{"summarize", &Flags{LogFile: "/dev/null", OutputFile: "output.parquet", Summarize: true}},
+		{"output-format flag", &Flags{LogFile: "/dev/null", OutputFile: "out.bin", OutputFormat: "parquet", Top: 5}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := runApp(tc.flags, []string{"test_dir"}, false, testdev.DevicesInfoGetterMock{})
+			assert.Empty(t, out)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "cannot be combined with Parquet export")
+			// The rejection is before the file open, so no stray output is left.
+			_, statErr := os.Stat(tc.flags.OutputFile)
+			assert.True(t, os.IsNotExist(statErr))
+		})
+	}
+}
+
 func TestAnalyzePathWithChdir(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
@@ -722,9 +757,10 @@ func (m *uiTimeFilterMock) SetAnalyzer(analyzer common.Analyzer)              {}
 func (m *uiTimeFilterMock) SetTimeFilter(timeFilter common.TimeFilter) {
 	m.timeFilter = timeFilter
 }
-func (m *uiTimeFilterMock) SetArchiveBrowsing(value bool) {}
-func (m *uiTimeFilterMock) SetCollapsePath(value bool)    {}
-func (m *uiTimeFilterMock) StartUILoop() error            { return nil }
+func (m *uiTimeFilterMock) SetArchiveBrowsing(value bool)      {}
+func (m *uiTimeFilterMock) SetCollapsePath(value bool)         {}
+func (m *uiTimeFilterMock) SetExportThreshold(threshold int64) {}
+func (m *uiTimeFilterMock) StartUILoop() error                 { return nil }
 
 func TestSetTimeFiltersInvalid(t *testing.T) {
 	a := &App{Flags: &Flags{Since: "not-a-date"}}

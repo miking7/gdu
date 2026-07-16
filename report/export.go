@@ -16,6 +16,7 @@ import (
 	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
 	"github.com/dundee/gdu/v5/pkg/fs"
+	"github.com/dundee/gdu/v5/pkg/parquet"
 	"github.com/fatih/color"
 )
 
@@ -30,6 +31,12 @@ type UI struct {
 	top          int
 	depth        int
 	summarize    bool
+	outputFormat string
+}
+
+// SetOutputFormat selects the export format ("json" or "parquet"). Empty means JSON.
+func (ui *UI) SetOutputFormat(format string) {
+	ui.outputFormat = format
 }
 
 // CreateExportUI creates UI for stdout
@@ -215,6 +222,27 @@ func (ui *UI) summarizeDir(dir fs.Item) fs.Item {
 func (ui *UI) exportDir(dir fs.Item, waitWritten *sync.WaitGroup) error {
 	// Sorting is now handled by GetFiles with sort parameters
 
+	if ui.outputFormat == "parquet" {
+		return ui.exportParquet(dir, waitWritten)
+	}
+
+	// Apply the scope filters (-t/--depth/--summarize) first, then bucket
+	// sub-threshold objects on the already-filtered tree. Order matters: the
+	// rollup preserves each directory's exact recursive totals, so it must run
+	// last, over whatever subset the filters produced.
+	switch {
+	case ui.summarize:
+		dir = ui.summarizeDir(dir)
+	case ui.top > 0:
+		dir = ui.topDir(dir)
+	case ui.depth > 0:
+		dir = ui.limitDirByDepth(dir, 0)
+	}
+
+	if ui.ExportThreshold > 0 {
+		dir = analyze.Rollup(dir, ui.ExportThreshold)
+	}
+
 	var (
 		buff bytes.Buffer
 		err  error
@@ -225,15 +253,6 @@ func (ui *UI) exportDir(dir fs.Item, waitWritten *sync.WaitGroup) error {
 	buff.Write([]byte(`","timestamp":`))
 	buff.Write([]byte(strconv.FormatInt(time.Now().Unix(), 10)))
 	buff.Write([]byte("},\n"))
-
-	switch {
-	case ui.summarize:
-		dir = ui.summarizeDir(dir)
-	case ui.top > 0:
-		dir = ui.topDir(dir)
-	case ui.depth > 0:
-		dir = ui.limitDirByDepth(dir, 0)
-	}
 
 	if err := dir.EncodeJSON(&buff, true); err != nil {
 		return err
@@ -248,6 +267,35 @@ func (ui *UI) exportDir(dir fs.Item, waitWritten *sync.WaitGroup) error {
 	if f, ok := ui.exportOutput.(*os.File); ok {
 		err = f.Close()
 		if err != nil {
+			return err
+		}
+	}
+
+	if ui.ShowProgress {
+		ui.writtenChan <- struct{}{}
+		waitWritten.Wait()
+	}
+
+	return nil
+}
+
+func (ui *UI) exportParquet(dir fs.Item, waitWritten *sync.WaitGroup) error {
+	id := common.CollectScanIdentity()
+	meta := parquet.ScanMeta{
+		ScanRoot:       dir.GetPath(),
+		ScanTime:       time.Now().UTC(),
+		ThresholdBytes: ui.ExportThreshold,
+		Host:           id.Host,
+		Username:       id.Username,
+		SudoUser:       id.SudoUser,
+	}
+
+	if err := parquet.WriteTree(ui.exportOutput, dir, &meta); err != nil {
+		return err
+	}
+
+	if f, ok := ui.exportOutput.(*os.File); ok {
+		if err := f.Close(); err != nil {
 			return err
 		}
 	}

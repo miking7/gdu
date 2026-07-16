@@ -5,21 +5,68 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/dundee/gdu/v5/pkg/analyze"
+	"github.com/dundee/gdu/v5/pkg/parquet"
 )
 
-// ReadAnalysis reads analysis report from JSON file and returns directory item
+// parquetMagic frames every Parquet file at both ends.
+const parquetMagic = "PAR1"
+
+// ReadAnalysis reads an analysis report (JSON or Parquet) and returns the
+// directory tree, loading the most recent snapshot from a multi-snapshot Parquet
+// file. See ReadAnalysisWithSnapshot to choose a specific snapshot.
 func ReadAnalysis(input io.Reader) (dir *analyze.Dir, err error) {
-	var data any
+	return ReadAnalysisWithSnapshot(input, parquet.SnapshotSelector{})
+}
+
+// ReadAnalysisWithSnapshot reads an analysis report (JSON or Parquet) and returns
+// the directory tree. The format is detected from the leading file magic, so
+// the same code path serves both `gdu -f file.json` and `gdu -f file.parquet`
+// (including stdin). sel selects a snapshot from a multi-snapshot Parquet file; it
+// is ignored for JSON input (which holds a single tree).
+func ReadAnalysisWithSnapshot(input io.Reader, sel parquet.SnapshotSelector) (dir *analyze.Dir, err error) {
+	// A seekable file lets us sniff the magic and stream a Parquet snapshot
+	// directly, without buffering the whole (possibly multi-hundred-MB) file.
+	if f, ok := input.(*os.File); ok {
+		if d, handled, perr := readParquetFile(f, sel); handled {
+			return d, perr
+		}
+	}
 
 	var buff bytes.Buffer
 	if _, err = buff.ReadFrom(input); err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(buff.Bytes(), &data); err != nil {
+	raw := buff.Bytes()
+	if len(raw) >= len(parquetMagic) && string(raw[:len(parquetMagic)]) == parquetMagic {
+		return parquet.ReadTreeSelected(bytes.NewReader(raw), int64(len(raw)), sel)
+	}
+	return parseJSONAnalysis(raw)
+}
+
+// readParquetFile streams a Parquet snapshot straight from a seekable file when
+// the magic matches. handled is false (with no error) when f is not a readable
+// Parquet file, so the caller falls back to buffering + JSON parsing.
+func readParquetFile(f *os.File, sel parquet.SnapshotSelector) (dir *analyze.Dir, handled bool, err error) {
+	st, statErr := f.Stat()
+	if statErr != nil {
+		return nil, false, nil
+	}
+	magic := make([]byte, len(parquetMagic))
+	if _, rerr := f.ReadAt(magic, 0); rerr != nil || string(magic) != parquetMagic {
+		return nil, false, nil
+	}
+	d, derr := parquet.ReadTreeSelected(f, st.Size(), sel)
+	return d, true, derr
+}
+
+func parseJSONAnalysis(raw []byte) (*analyze.Dir, error) {
+	var data any
+	if err := json.Unmarshal(raw, &data); err != nil {
 		return nil, err
 	}
 

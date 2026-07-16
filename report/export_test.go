@@ -2,7 +2,9 @@ package report
 
 import (
 	"bytes"
+	"fmt"
 	"os"
+	"sync"
 	"testing"
 
 	log "github.com/sirupsen/logrus"
@@ -294,6 +296,92 @@ func TestAnalyzePathWithProgress(t *testing.T) {
 
 	assert.Nil(t, err)
 	assert.Contains(t, reportOutput.String(), `"name":"nested"`)
+}
+
+func TestAnalyzePathWithThreshold(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	output := bytes.NewBuffer(make([]byte, 10))
+	reportOutput := bytes.NewBuffer(make([]byte, 10))
+
+	ui := CreateExportUI(output, reportOutput, false, false, false, 0, 0, false)
+	ui.SetIgnoreDirPaths([]string{"/xxx"})
+	ui.SetExportThreshold(1 << 20) // 1 MiB collapses the tiny test tree into a rollup
+	err := ui.AnalyzePath("test_dir", nil)
+	assert.Nil(t, err)
+	err = ui.StartUILoop()
+	assert.Nil(t, err)
+
+	out := reportOutput.String()
+	// "smaller objects" survives escaping ('<'/'>' are escaped, the words are not).
+	assert.Contains(t, out, "smaller objects")
+	// Everything sub-threshold collapsed, so the individual entries are gone.
+	assert.NotContains(t, out, `"name":"nested"`)
+	assert.NotContains(t, out, `"name":"file2"`)
+}
+
+// TestExportFiltersRunBeforeThreshold pins the order of the JSON export
+// transforms: the scope filter (here --top) is applied first, then the
+// threshold rollup runs over the already-filtered tree. The tree is built so
+// the two orderings diverge observably: five small files together outweigh
+// either big file, so a rollup-first bug would bucket them and let that bucket
+// displace a real file from the top-N — dropping big2 and emitting a
+// "<smaller objects>" bucket. Filters-first keeps both big files and never
+// buckets (both survive --top and both clear the threshold).
+func TestExportFiltersRunBeforeThreshold(t *testing.T) {
+	root := &analyze.Dir{
+		File:     &analyze.File{Name: "root"},
+		BasePath: "/",
+	}
+	addFile := func(name string, sizeUsage int64) {
+		root.AddFile(&analyze.File{Name: name, Size: sizeUsage, Usage: sizeUsage, Parent: root})
+	}
+	addFile("big1", 1000)
+	addFile("big2", 1000)
+	for i := 0; i < 5; i++ {
+		addFile(fmt.Sprintf("small%d", i), 300) // 5 * 300 = 1500 aggregate > 1000
+	}
+	root.UpdateStats(make(fs.HardLinkedItems, 10))
+
+	var output, reportOutput bytes.Buffer
+	ui := CreateExportUI(&output, &reportOutput, false, false, false, 2, 0, false) // --top 2
+	ui.SetExportThreshold(500)                                                     // buckets the 300-usage smalls
+
+	var waitWritten sync.WaitGroup
+	assert.Nil(t, ui.exportDir(root, &waitWritten))
+
+	out := reportOutput.String()
+	// Filters-first: both big files survive --top and clear the threshold.
+	assert.Contains(t, out, `"name":"big1"`)
+	assert.Contains(t, out, `"name":"big2"`)
+	// The smalls were filtered out by --top before the rollup ever ran, so no
+	// bucket is emitted; a rollup-first bug would surface one here and drop big2.
+	assert.NotContains(t, out, "smaller objects")
+}
+
+func TestExportToParquetFile(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	f, err := os.OpenFile("output.parquet", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	assert.Nil(t, err)
+	defer func() { os.Remove("output.parquet") }()
+
+	output := bytes.NewBuffer(make([]byte, 10))
+	ui := CreateExportUI(output, f, false, false, false, 0, 0, false)
+	ui.SetOutputFormat("parquet")
+	ui.SetIgnoreDirPaths([]string{"/xxx"})
+	err = ui.AnalyzePath("test_dir", nil)
+	assert.Nil(t, err)
+	assert.Nil(t, ui.StartUILoop())
+
+	data, err := os.ReadFile("output.parquet")
+	assert.Nil(t, err)
+	// A valid Parquet file is framed by the "PAR1" magic at both ends.
+	assert.Greater(t, len(data), 8)
+	assert.Equal(t, "PAR1", string(data[:4]))
+	assert.Equal(t, "PAR1", string(data[len(data)-4:]))
 }
 
 func TestShowDevices(t *testing.T) {

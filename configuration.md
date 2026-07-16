@@ -8,7 +8,9 @@ You can get the full list of all possible options by running:
 gdu --write-config
 ```
 
-This will create file `$HOME/.gdu.yaml` with all the options set to default values.
+This writes all the options (set to their current values) to the config file gdu would read back:
+an existing user config if you have one (`~/.config/gdu/gdu.yaml` is preferred, then legacy
+`~/.gdu.yaml`), else it creates `~/.config/gdu/gdu.yaml`.
 
 Let's go through them one by one:
 
@@ -23,6 +25,18 @@ Import analysis from JSON file
 #### `output-file`
 
 Export all info into file as JSON
+
+#### `export-threshold`
+
+Bucket objects smaller than this size into a `<smaller objects>` rollup row on export, shrinking the
+exported file while preserving exact recursive totals. Accepts binary units (`10M`, `500K`, `2G`) or a
+plain byte count; `0` (the default) keeps everything. Applies to all export formats.
+
+#### `output-format`
+
+Export format used with `output-file`: `json` (the default) or `parquet`. When unset, the format is
+inferred from the output file extension (`.parquet` selects Parquet). Parquet snapshots are
+zstd-compressed and one flat row per entry, ready to query with DuckDB.
 
 #### `ignore-dirs`
 

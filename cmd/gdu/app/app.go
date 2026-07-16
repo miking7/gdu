@@ -45,6 +45,7 @@ type UI interface {
 	SetTimeFilter(timeFilter common.TimeFilter)
 	SetArchiveBrowsing(value bool)
 	SetCollapsePath(value bool)
+	SetExportThreshold(threshold int64)
 	StartUILoop() error
 }
 
@@ -56,6 +57,7 @@ type Flags struct {
 	LogFile            string   `yaml:"log-file"`
 	InputFile          string   `yaml:"input-file"`
 	OutputFile         string   `yaml:"output-file"`
+	OutputFormat       string   `yaml:"output-format"`
 	IgnoreFromFile     string   `yaml:"ignore-from-file"`
 	IgnoreDirs         []string `yaml:"ignore-dirs"`
 	IgnoreDirPatterns  []string `yaml:"ignore-dir-patterns"`
@@ -104,6 +106,7 @@ type Flags struct {
 	ArchiveBrowsing    bool     `yaml:"archive-browsing"`
 	CollapsePath       bool     `yaml:"collapse-path"`
 	BrowseParentDirs   bool     `yaml:"browse-parent-dirs"`
+	ExportThreshold    string   `yaml:"export-threshold"`
 }
 
 // ShouldRunInNonInteractiveMode checks if the application should run in non-interactive mode
@@ -267,6 +270,12 @@ func (a *App) Run() error {
 		ui.SetCollapsePath(true)
 	}
 
+	threshold, err := common.ParseSizeThreshold(a.Flags.ExportThreshold)
+	if err != nil {
+		return fmt.Errorf("invalid --export-threshold value %q: %w", a.Flags.ExportThreshold, err)
+	}
+	ui.SetExportThreshold(threshold)
+
 	// Set up time filter if any time flags are provided
 	if a.Flags.Since != "" || a.Flags.Until != "" || a.Flags.MaxAge != "" || a.Flags.MinAge != "" {
 		if err := a.setTimeFilters(ui); err != nil {
@@ -309,6 +318,13 @@ func (a *App) Run() error {
 		return err
 	}
 
+	// Hand any file written as root (export -o) back to the invoking user so a
+	// sudo scan leaves user-owned output. Snapshots (--save-snapshots) and TUI exports
+	// chown themselves at their own write sites.
+	if a.Flags.OutputFile != "" && a.Flags.OutputFile != "-" {
+		common.ChownToInvoker(a.Flags.OutputFile)
+	}
+
 	return ui.StartUILoop()
 }
 
@@ -317,6 +333,28 @@ func (a *App) getPath() string {
 		return a.Args[0]
 	}
 	return "."
+}
+
+// Export format values for --output-format and the -o file-extension fallback.
+const (
+	outputFormatJSON    = "json"
+	outputFormatParquet = "parquet"
+)
+
+// resolveOutputFormat determines the export format from the --output-format flag,
+// falling back to the -o file extension (".parquet" => parquet), else JSON.
+func (a *App) resolveOutputFormat() (string, error) {
+	switch a.Flags.OutputFormat {
+	case "":
+		if strings.HasSuffix(strings.ToLower(a.Flags.OutputFile), ".parquet") {
+			return outputFormatParquet, nil
+		}
+		return outputFormatJSON, nil
+	case outputFormatJSON, outputFormatParquet:
+		return a.Flags.OutputFormat, nil
+	default:
+		return "", fmt.Errorf("unknown --output-format %q (want json or parquet)", a.Flags.OutputFormat)
+	}
 }
 
 func (a *App) setMaxProcs() {
@@ -366,6 +404,21 @@ func (a *App) createUI() (UI, error) {
 
 	switch {
 	case a.Flags.OutputFile != "":
+		format, ferr := a.resolveOutputFormat()
+		if ferr != nil {
+			return nil, ferr
+		}
+		// A Parquet snapshot's manifest claims a complete scan — its rows and
+		// totals feed the timeline, baselines and go-live — so a filtered file
+		// would masquerade as a full scan. Reject the scope filters up front,
+		// before opening the output or scanning; --export-threshold is the one
+		// sanctioned lossy knob (it preserves each directory's totals and is
+		// recorded in the manifest).
+		if format == outputFormatParquet && (a.Flags.Top > 0 || a.Flags.Depth > 0 || a.Flags.Summarize) {
+			return nil, fmt.Errorf(
+				"--top/--depth/--summarize cannot be combined with Parquet export; " +
+					"use --export-threshold to bound snapshot size")
+		}
 		var output io.Writer
 		if a.Flags.OutputFile == "-" {
 			output = os.Stdout
@@ -375,7 +428,7 @@ func (a *App) createUI() (UI, error) {
 				return nil, fmt.Errorf("opening output file: %w", err)
 			}
 		}
-		ui = report.CreateExportUI(
+		exportUI := report.CreateExportUI(
 			a.Writer,
 			output,
 			!a.Flags.NoColor && a.Istty,
@@ -385,6 +438,8 @@ func (a *App) createUI() (UI, error) {
 			a.Flags.Depth,
 			a.Flags.Summarize,
 		)
+		exportUI.SetOutputFormat(format)
+		ui = exportUI
 	case a.Flags.ShouldRunInNonInteractiveMode(a.Istty):
 		fixedUnit := ""
 		if a.Flags.ShowInKiB {
