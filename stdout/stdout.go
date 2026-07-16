@@ -1,12 +1,15 @@
 package stdout
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,13 +17,19 @@ import (
 	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
 	"github.com/dundee/gdu/v5/pkg/fs"
+	"github.com/dundee/gdu/v5/pkg/parquet"
 	"github.com/dundee/gdu/v5/report"
 	"github.com/fatih/color"
+	log "github.com/sirupsen/logrus"
 )
 
 // UI struct
 type UI struct {
 	output io.Writer
+	// progressOut receives the transient auto-compaction activity indicator
+	// (os.Stderr in normal use; a buffer in tests). It is kept separate from
+	// output so the indicator never lands in piped stdout data.
+	progressOut io.Writer
 	*common.UI
 	red         *color.Color
 	orange      *color.Color
@@ -66,6 +75,7 @@ func CreateStdoutUI(
 			UseSIPrefix:      useSIPrefix,
 		},
 		output:      output,
+		progressOut: os.Stderr,
 		summarize:   summarize,
 		noPrefix:    noPrefix,
 		top:         top,
@@ -229,6 +239,27 @@ func (ui *UI) AnalyzePath(path string, _ fs.Item) error {
 
 	wait.Wait()
 
+	// Persist a snapshot of the completed scan as a side effect; output is
+	// unchanged whether or not --save-snapshots is set.
+	if ui.SaveSnapshotEnabled {
+		runtime.GC() // reclaim scan garbage so the write doesn't raise peak RSS
+		ui.saveSnapshot(dir)
+	}
+
+	ui.printResults(dir)
+
+	// Compact the archive only after the scan result is printed, so a large
+	// merge never stalls piped output (non-interactive has no event loop to
+	// background onto, so this runs inline — the report is out first).
+	if ui.SaveSnapshotEnabled {
+		ui.maybeAutoCompact()
+	}
+
+	return nil
+}
+
+// printResults renders a completed tree in the mode the flags asked for.
+func (ui *UI) printResults(dir fs.Item) {
 	switch {
 	case ui.top > 0:
 		ui.printTopFiles(dir)
@@ -239,8 +270,150 @@ func (ui *UI) AnalyzePath(path string, _ fs.Item) error {
 	default:
 		ui.showDir(dir)
 	}
+}
 
-	return nil
+// SetSaveSnapshot enables snapshot saving and, because the default top-dir
+// analyzer keeps only top-level totals, swaps in the full-tree analyzer the
+// snapshot needs — enabling the save *is* forcing the analyzer, so the two can
+// never diverge. Output is unchanged (same top-level figures), at the cost of
+// more memory.
+func (ui *UI) SetSaveSnapshot(dir string, thresholdBytes int64) {
+	ui.UI.SetSaveSnapshot(dir, thresholdBytes)
+	if _, shallow := ui.Analyzer.(*analyze.TopDirAnalyzer); shallow {
+		ui.Analyzer = analyze.CreateAnalyzer()
+	}
+}
+
+func (ui *UI) saveSnapshot(tree fs.Item) {
+	path, _, createdDir, err := parquet.SaveSnapshot(tree, ui.SnapshotsDir, ui.SnapshotThreshold, time.Now())
+	if createdDir {
+		// This save created the archive: say where recording is landing, on
+		// stderr so piped stdout data stays byte-clean. Announced even if the
+		// write itself then failed — the directory now exists, so no later save
+		// would ever announce, and recording must not start silently.
+		announcement := common.SnapshotDirAnnouncement(ui.SnapshotsDir)
+		log.Print(announcement)
+		fmt.Fprintln(ui.progressOut, "gdu: "+announcement)
+	}
+	if err != nil {
+		log.Printf("save-snapshots failed: %s", err)
+		return
+	}
+	log.Printf("Saved snapshot to %s", path)
+}
+
+// maybeAutoCompact runs the process's one opportunistic archive compaction
+// after a snapshot save (unless --no-auto-compact). Detailed outcomes go to the log,
+// which is silent by default (--log-file is /dev/null). On an interactive
+// terminal with work to do it additionally shows a transient stderr indicator
+// so the user knows why the prompt hasn't returned, and Ctrl-C cancels the
+// merge safely. Piped and --no-progress runs stay completely silent, so stdout
+// data is never touched.
+func (ui *UI) maybeAutoCompact() {
+	if !ui.ClaimAutoCompactRun() {
+		return
+	}
+	now := time.Now()
+	// The cheap filename-only pre-check lets a run with nothing to merge skip the
+	// indicator and signal plumbing entirely; AutoCompact re-checks for real.
+	if !ui.ShowProgress || !parquet.NeedsCompaction(ui.SnapshotsDir, now) {
+		if _, err := parquet.AutoCompact(context.Background(), ui.SnapshotsDir, now); err != nil {
+			log.Printf("auto-compact failed: %s", err)
+		}
+		return
+	}
+	ui.autoCompactWithIndicator(now)
+}
+
+// autoCompactWithIndicator runs the compaction behind a live stderr spinner,
+// with Ctrl-C wired to cancel it cooperatively (the tmp is discarded and the
+// sources are left intact — see parquet.RunCompactionContext). It is only used
+// on an interactive terminal when there is a closed month to merge.
+func (ui *UI) autoCompactWithIndicator(now time.Time) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	restore := trapInterrupt(cancel)
+	defer restore()
+
+	// One synchronous frame first so the notice always appears — even for a
+	// merge that finishes before the animation's first tick. The goroutine then
+	// only animates; the caller owns the final clear (all writes to progressOut
+	// are ordered: this frame → goroutine ticks → clear).
+	ui.writeCompactingFrame(0)
+	stop := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		ui.animateCompacting(stop)
+	}()
+
+	_, err := parquet.AutoCompact(ctx, ui.SnapshotsDir, now)
+	close(stop)
+	<-stopped
+	ui.clearProgressLine()
+
+	// A Ctrl-C cancellation may surface as the top-level error or, when it hits
+	// the final/only group mid-merge, only inside the result — so key off the
+	// context, the single source of truth for "did the user abort". The
+	// in-flight merge is rolled back (tmp discarded, sources intact) and any
+	// month already finished is kept.
+	switch {
+	case ctx.Err() != nil:
+		fmt.Fprintln(ui.progressOut, "gdu: compaction interrupted.")
+	case err != nil:
+		log.Printf("auto-compact failed: %s", err)
+	}
+}
+
+// animateCompacting advances the spinner until stop is closed. It does not
+// clear the line; the caller does, once, after this returns.
+func (ui *UI) animateCompacting(stop <-chan struct{}) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	i := 0
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			i = (i + 1) % progressRunesCount
+			ui.writeCompactingFrame(i)
+		}
+	}
+}
+
+// writeCompactingFrame redraws the single-line auto-compaction notice in place.
+func (ui *UI) writeCompactingFrame(i int) {
+	fmt.Fprintf(ui.progressOut, "\r %s compacting snapshot archive… (Ctrl-C to skip)",
+		string(progressRunes[i]))
+}
+
+// clearProgressLine wipes the in-place notice so it leaves no residue behind.
+func (ui *UI) clearProgressLine() {
+	fmt.Fprint(ui.progressOut, "\r")
+	fmt.Fprint(ui.progressOut, strings.Repeat(" ", 60))
+	fmt.Fprint(ui.progressOut, "\r")
+}
+
+// trapInterrupt makes the next SIGINT cancel the in-flight compaction
+// cooperatively — the tmp file is discarded and the sources are left intact —
+// instead of hard-killing gdu mid-write. The returned func restores default
+// signal handling and must be called when the merge is done.
+func trapInterrupt(cancel context.CancelFunc) func() {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-done:
+		}
+	}()
+	return func() {
+		signal.Stop(sigCh)
+		close(done)
+	}
 }
 
 // ReadFromStorage reads analysis data from persistent key-value storage
@@ -254,14 +427,7 @@ func (ui *UI) ReadFromStorage(storagePath, path string) error {
 		return err
 	}
 
-	switch {
-	case ui.top > 0:
-		ui.printTopFiles(dir)
-	case ui.summarize:
-		ui.printTotalItem(dir)
-	default:
-		ui.showDir(dir)
-	}
+	ui.printResults(dir)
 	return nil
 }
 
@@ -423,6 +589,17 @@ func (ui *UI) ReadAnalysis(input io.Reader) error {
 		doneChan chan struct{}
 	)
 
+	sel := parquet.SnapshotSelector{
+		Spec: ui.SnapshotSpec, Root: ui.SnapshotRoot,
+		ExactTs: ui.SnapshotTs, ExactHost: ui.SnapshotHost,
+	}
+	// A multi-snapshot file loaded without --snapshot defaults to the latest; tell the
+	// user (on stderr, so piped stdout data stays clean) which snapshot and how to
+	// pick another.
+	if note := report.MultiSnapshotNote(input, sel); note != "" {
+		fmt.Fprintln(os.Stderr, "gdu: "+note)
+	}
+
 	if ui.ShowProgress {
 		wait.Add(1)
 		doneChan = make(chan struct{})
@@ -435,7 +612,7 @@ func (ui *UI) ReadAnalysis(input io.Reader) error {
 	wait.Add(1)
 	go func() {
 		defer wait.Done()
-		dir, err = report.ReadAnalysis(input)
+		dir, err = report.ReadAnalysisWithSnapshot(input, sel)
 		if err != nil {
 			if ui.ShowProgress {
 				doneChan <- struct{}{}
@@ -461,11 +638,7 @@ func (ui *UI) ReadAnalysis(input io.Reader) error {
 		return err
 	}
 
-	if ui.summarize {
-		ui.printTotalItem(dir)
-	} else {
-		ui.showDir(dir)
-	}
+	ui.printResults(dir)
 
 	return nil
 }

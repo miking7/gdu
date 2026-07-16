@@ -17,7 +17,7 @@ func TestNoCrossWithErr(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", NoCross: true},
 		[]string{"test_dir"},
 		false,
@@ -32,7 +32,7 @@ func TestListDevicesWithErr(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	_, err := runApp(
+	_, err := runApp(t,
 		&Flags{LogFile: "/dev/null", ShowDisks: true},
 		[]string{},
 		false,
@@ -43,7 +43,7 @@ func TestListDevicesWithErr(t *testing.T) {
 }
 
 func TestOutputFileError(t *testing.T) {
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", OutputFile: "/xyzxyz"},
 		[]string{},
 		false,
@@ -66,7 +66,7 @@ func TestUseStorage(t *testing.T) {
 		}
 	}()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", DbPath: storagePath},
 		[]string{"test_dir"},
 		false,
@@ -89,7 +89,7 @@ func TestReadFromStorage(t *testing.T) {
 		}
 	}()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", DbPath: storagePath},
 		[]string{"test_dir"},
 		false,
@@ -98,7 +98,7 @@ func TestReadFromStorage(t *testing.T) {
 	assert.Contains(t, out, "nested")
 	assert.Nil(t, err)
 
-	out, err = runApp(
+	out, err = runApp(t,
 		&Flags{LogFile: "/dev/null", ReadFromStorage: true, DbPath: storagePath},
 		[]string{"test_dir"},
 		false,
@@ -114,7 +114,7 @@ func TestAnalyzePathWithSqliteStorage(t *testing.T) {
 
 	dbPath := filepath.Join(t.TempDir(), "db", "test.sqlite")
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", DbPath: dbPath},
 		[]string{"test_dir"},
 		false,
@@ -123,7 +123,7 @@ func TestAnalyzePathWithSqliteStorage(t *testing.T) {
 	assert.Contains(t, out, "nested")
 	assert.Nil(t, err)
 
-	out, err = runApp(
+	out, err = runApp(t,
 		&Flags{LogFile: "/dev/null", DbPath: dbPath, ReadFromStorage: true},
 		[]string{"test_dir"},
 		false,
@@ -141,7 +141,7 @@ func TestAnalyzePathWithSqliteStorageError(t *testing.T) {
 	err := os.WriteFile(parentFile, []byte("x"), 0o600)
 	assert.Nil(t, err)
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", DbPath: filepath.Join(parentFile, "db.sqlite")},
 		[]string{"test_dir"},
 		false,

@@ -12,6 +12,10 @@ gdu - Pretty fast disk usage analyzer written in Go
 
 **gdu \[flags\] \[directory_to_scan\]**
 
+**gdu snapshots \[list\] \[file.parquet\]**
+
+**gdu snapshots compact \[\--dry-run\]**
+
 # DESCRIPTION
 
 Pretty fast disk usage analyzer written in Go.
@@ -19,6 +23,19 @@ Pretty fast disk usage analyzer written in Go.
 Gdu is intended primarily for SSD disks where it can fully utilize
 parallel processing. However HDDs work as well, but the performance gain
 is not so huge.
+
+# COMMANDS
+
+**gdu snapshots \[list\] \[file.parquet\]**
+List every snapshot in the snapshot archive (\--snapshots-dir), newest first,
+or the snapshots held in one Parquet snapshot file (\"-\" reads from standard
+input). Command alias: **snaps**; verb alias: **ls**.
+
+**gdu snapshots compact \[\--dry-run\]**
+Merge each closed month's snapshots in the archive into one monthly Parquet
+file per scan root (lossless; sources are deleted only after the result is
+verified). With **\--dry-run**, print what would be compacted without writing
+or deleting anything.
 
 # OPTIONS
 
@@ -109,6 +126,18 @@ non-interactive mode
 **-o**, **\--output-file** Export all info into file as JSON. If the file is \"-\", write to standard output.
 
 **\--output-format** Export format: json (default) or parquet. Inferred from the -o file extension when unset.
+
+**\--save-snapshots**\[="auto"\] When to save each completed scan of a chosen root as a Parquet snapshot in the snapshots directory (auto|always|never, default auto): auto saves interactive scans only, always saves in every mode (forcing the full-tree analyzer non-interactively), never disables saving. Refreshes (r) and go-live spot-rescans never save; quitting mid-scan asks and discards. Snapshot rollup threshold defaults to 10M.
+
+**\--snapshots-dir** Directory for saved snapshots (default $XDG_DATA_HOME/gdu/snapshots, i.e. ~/.local/share/gdu/snapshots).
+
+**\--snapshot** Which snapshot to load: latest, earliest, or a local timestamp/prefix like 2026-06-19 or 2026-06-19T15:30:05. With -f, selects within that file; without -f, resolves against the archive for snapshots of the scanned path and loads the match.
+
+**\--snapshot-root** Restrict --snapshot selection to this exact scan root (rarely needed; the positional path is the primary scope without -f).
+
+**\--no-auto-compact**\[=false\] Do not compact the archive's closed months after a snapshot is saved.
+
+**\--owner** Make written output (snapshots, -o exports) owned by this user: resolves their home for the default snapshots-dir and chowns output to them. For scheduled root scans.
 
 **\--config-file** Read config from file (default is ~/.config/gdu/gdu.yaml, or ~/.gdu.yaml if that exists)
 

@@ -71,3 +71,33 @@ func TestSortByUsedSize(t *testing.T) {
 	assert.Equal(t, "yyy", devices[1].Name)
 	assert.Equal(t, "xxx", devices[2].Name)
 }
+
+func TestForPath(t *testing.T) {
+	devs := Devices{
+		{MountPoint: "/"},
+		{MountPoint: "/Volumes/SD"},
+		{MountPoint: "/Users/me/mnt"},
+	}
+	cases := []struct {
+		path, wantMount string
+	}{
+		{"/Users/me/proj", "/"},
+		{"/Volumes/SD", "/Volumes/SD"},        // path == mount
+		{"/Volumes/SD/photos", "/Volumes/SD"}, // longest-prefix mount wins
+		{"/Users/me/mnt/x", "/Users/me/mnt"},
+		{"/Volumes", "/"}, // /Volumes itself is a dir on the root volume
+	}
+	for _, c := range cases {
+		d := ForPath(devs, c.path)
+		if assert.NotNil(t, d, c.path) {
+			assert.Equal(t, c.wantMount, d.MountPoint, c.path)
+		}
+	}
+
+	assert.Nil(t, ForPath(nil, "/anything"))
+	assert.Nil(t, ForPath(Devices{{MountPoint: "/Volumes/SD"}}, "/etc"), "no covering mount")
+
+	// A mount must match on a path boundary, not a bare string prefix.
+	boundary := Devices{{MountPoint: "/Vol"}, {MountPoint: "/"}}
+	assert.Equal(t, "/", ForPath(boundary, "/Volumes/x").MountPoint, "/Vol must not prefix-match /Volumes")
+}

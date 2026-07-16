@@ -42,12 +42,67 @@ However HDDs work as well, but the performance gain is not so huge.
 	RunE:         runE,
 }
 
+var snapshotsDryRun bool
+
+var snapshotsCmd = &cobra.Command{
+	Use:     "snapshots [file.parquet]",
+	Aliases: []string{"snaps"},
+	Short:   "List or compact the snapshot archive",
+	Long: `List every snapshot in the snapshot archive (--snapshots-dir), newest first,
+or the snapshots held in one Parquet snapshot file ("-" reads from stdin).
+
+Alias: "gdu snaps". Subcommands: list (the default action, alias "ls") and
+compact (merge each closed month's snapshots into one monthly file).
+`,
+	Args:         cobra.MaximumNArgs(1),
+	SilenceUsage: true,
+	RunE:         runSnapshotsListE,
+}
+
+var snapshotsListCmd = &cobra.Command{
+	Use:          "list [file.parquet]",
+	Aliases:      []string{"ls"},
+	Short:        "List snapshots in the archive or a snapshot file",
+	Args:         cobra.MaximumNArgs(1),
+	SilenceUsage: true,
+	RunE:         runSnapshotsListE,
+}
+
+var snapshotsCompactCmd = &cobra.Command{
+	Use:   "compact",
+	Short: "Merge each closed month's snapshots into one monthly file",
+	Long: `Merge each closed month's snapshots in the archive (--snapshots-dir) into one
+monthly Parquet file per scan root (lossless; sources are deleted only after
+the result is verified).
+`,
+	Args:         cobra.NoArgs,
+	SilenceUsage: true,
+	RunE:         runSnapshotsCompactE,
+}
+
 // nolint:funlen // a lot of flags to initialize
 func init() {
 	af = &app.Flags{Style: app.Style{ProgressModal: app.ProgressModalOpts{ShowDiskProgressBar: true}}}
+
+	// Flags shared with the snapshots subcommand are registered persistently so
+	// `gdu snapshots …` inherits them.
+	pflags := rootCmd.PersistentFlags()
+	pflags.StringVar(&af.CfgFile, "config-file", "",
+		"Read config from file (default is ~/.config/gdu/gdu.yaml, or ~/.gdu.yaml if that exists)")
+	pflags.StringVarP(&af.LogFile, "log-file", "l", "/dev/null", "Path to a logfile")
+	pflags.StringVar(&af.SnapshotsDir, "snapshots-dir", "",
+		"Directory for saved snapshots (default $XDG_DATA_HOME/gdu/snapshots, i.e. ~/.local/share/gdu/snapshots).")
+	pflags.StringVar(&af.Owner, "owner", "",
+		"Make written output (snapshots, -o exports) owned by this user: resolves their "+
+			"home for the default snapshots-dir and chowns output to them. For scheduled root scans.")
+	pflags.IntVarP(&af.MaxCores, "max-cores", "m", runtime.NumCPU(), fmt.Sprintf("Set max cores that Gdu will use. %d cores available", runtime.NumCPU()))
+
+	rootCmd.AddCommand(snapshotsCmd)
+	snapshotsCmd.AddCommand(snapshotsListCmd, snapshotsCompactCmd)
+	snapshotsCompactCmd.Flags().BoolVar(&snapshotsDryRun, "dry-run", false,
+		"Print what would be compacted without writing or deleting anything.")
+
 	flags := rootCmd.Flags()
-	flags.StringVar(&af.CfgFile, "config-file", "", "Read config from file (default is ~/.config/gdu/gdu.yaml, or ~/.gdu.yaml if that exists)")
-	flags.StringVarP(&af.LogFile, "log-file", "l", "/dev/null", "Path to a logfile")
 	flags.StringVarP(&af.OutputFile, "output-file", "o", "", "Export all info into file as JSON")
 	flags.StringVarP(&af.InputFile, "input-file", "f", "", "Import analysis from JSON or Parquet file (format auto-detected)")
 	flags.StringVar(&af.ExportThreshold, "export-threshold", "0",
@@ -55,7 +110,21 @@ func init() {
 			"Binary units: 10M, 500K, 2G, or plain bytes. 0 = keep everything.")
 	flags.StringVar(&af.OutputFormat, "output-format", "",
 		"Export format: json (default) or parquet. Inferred from the -o file extension when unset.")
-	flags.IntVarP(&af.MaxCores, "max-cores", "m", runtime.NumCPU(), fmt.Sprintf("Set max cores that Gdu will use. %d cores available", runtime.NumCPU()))
+	flags.StringVar(&af.SaveSnapshots, "save-snapshots", "auto",
+		"When to save each completed scan of a chosen root as a Parquet snapshot in the snapshots "+
+			"directory (auto|always|never, default auto): auto saves interactive scans only, always "+
+			"saves in every mode (forcing the full-tree analyzer non-interactively), never disables "+
+			"saving. Refreshes and go-live spot-rescans never save. Snapshot rollup threshold "+
+			"defaults to 10M.")
+	flags.StringVar(&af.Snapshot, "snapshot", "",
+		"Which snapshot to load: latest, earliest, or a local timestamp/prefix like "+
+			"2026-06-19 or 2026-06-19T15:30:05. With -f, selects within that file; without -f, "+
+			"resolves against the archive for snapshots of the scanned path and loads the match.")
+	flags.StringVar(&af.SnapshotRoot, "snapshot-root", "",
+		"Restrict --snapshot selection to this exact scan root (rarely needed; the "+
+			"positional path is the primary scope without -f).")
+	flags.BoolVar(&af.NoAutoCompact, "no-auto-compact", false,
+		"Do not compact the archive's closed months after a snapshot is saved.")
 	flags.BoolVar(&af.SequentialScanning, "sequential", false, "Use sequential scanning (intended for rotating HDDs)")
 	flags.BoolVarP(&af.ShowVersion, "version", "v", false, "Print version")
 
@@ -254,6 +323,62 @@ func writeConfig(command *cobra.Command) error {
 	return nil
 }
 
+// setupLogging routes logrus to --log-file (stdout for "-") and reports any
+// config-load error there. The returned cleanup closes the log file.
+func setupLogging() (cleanup func(), err error) {
+	if runtime.GOOS == osWindows && af.LogFile == "/dev/null" {
+		af.LogFile = "nul"
+	}
+
+	var f *os.File
+	if af.LogFile == "-" {
+		f = os.Stdout
+		cleanup = func() {}
+	} else {
+		f, err = os.OpenFile(af.LogFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+		if err != nil {
+			return nil, fmt.Errorf("opening log file: %w", err)
+		}
+		cleanup = func() {
+			if cerr := f.Close(); cerr != nil {
+				panic(cerr)
+			}
+		}
+	}
+	log.SetOutput(f)
+
+	if configErr != nil {
+		log.Printf("Error reading config file: %s", configErr.Error())
+	}
+	return cleanup, nil
+}
+
+// runSnapshotsAction wraps a snapshots-subcommand action with the shared
+// setup: logging to --log-file and an App writing to the command's output.
+func runSnapshotsAction(command *cobra.Command, action func(a *app.App) error) error {
+	cleanup, err := setupLogging()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	return action(&app.App{Flags: af, Writer: command.OutOrStdout()})
+}
+
+// runSnapshotsListE backs `gdu snapshots [list] [file]`.
+func runSnapshotsListE(command *cobra.Command, args []string) error {
+	file := ""
+	if len(args) == 1 {
+		file = args[0]
+	}
+	return runSnapshotsAction(command, func(a *app.App) error { return a.ListSnapshots(file) })
+}
+
+// runSnapshotsCompactE backs `gdu snapshots compact [--dry-run]`.
+func runSnapshotsCompactE(command *cobra.Command, _ []string) error {
+	return runSnapshotsAction(command, func(a *app.App) error { return a.CompactSnapshots(snapshotsDryRun) })
+}
+
 func runE(command *cobra.Command, args []string) error {
 	var (
 		termApp *tview.Application
@@ -267,30 +392,11 @@ func runE(command *cobra.Command, args []string) error {
 		}
 	}
 
-	if runtime.GOOS == osWindows && af.LogFile == "/dev/null" {
-		af.LogFile = "nul"
+	cleanup, err := setupLogging()
+	if err != nil {
+		return err
 	}
-
-	var f *os.File
-	if af.LogFile == "-" {
-		f = os.Stdout
-	} else {
-		f, err = os.OpenFile(af.LogFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-		if err != nil {
-			return fmt.Errorf("opening log file: %w", err)
-		}
-		defer func() {
-			cerr := f.Close()
-			if cerr != nil {
-				panic(cerr)
-			}
-		}()
-	}
-	log.SetOutput(f)
-
-	if configErr != nil {
-		log.Printf("Error reading config file: %s", configErr.Error())
-	}
+	defer cleanup()
 
 	istty := isatty.IsTerminal(os.Stdout.Fd())
 

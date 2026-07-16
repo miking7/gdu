@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dundee/gdu/v5/cmd/gdu/app"
@@ -49,6 +50,85 @@ func TestInteractiveFlagCanBeSet(t *testing.T) {
 
 	if !af.Interactive {
 		t.Fatal("expected Interactive to be true after setting flag")
+	}
+}
+
+func TestDeletedFlagsAreGone(t *testing.T) {
+	// Clean break: the standalone-verb flags were replaced by the snapshots
+	// subcommand and must be unknown-flag errors, not hidden aliases.
+	for _, name := range []string{"list-scans", "compact-scans", "dry-run", "auto-compact", "baseline-scan"} {
+		if rootCmd.Flags().Lookup(name) != nil {
+			t.Errorf("expected flag --%s to be deleted from the root command", name)
+		}
+	}
+}
+
+func TestSnapshotsSubcommandWiring(t *testing.T) {
+	if snapshotsCmd.Name() != "snapshots" || !snapshotsCmd.HasAlias("snaps") {
+		t.Fatalf("expected the snapshots command with alias snaps, got %q %v",
+			snapshotsCmd.Name(), snapshotsCmd.Aliases)
+	}
+
+	var haveList, haveCompact bool
+	for _, sub := range snapshotsCmd.Commands() {
+		switch sub.Name() {
+		case "list":
+			haveList = true
+			if !sub.HasAlias("ls") {
+				t.Error("expected `snapshots list` to have alias ls")
+			}
+		case "compact":
+			haveCompact = true
+			if sub.Flags().Lookup("dry-run") == nil {
+				t.Error("expected `snapshots compact` to own the --dry-run flag")
+			}
+		}
+	}
+	if !haveList || !haveCompact {
+		t.Fatalf("expected list and compact subcommands, got list=%v compact=%v", haveList, haveCompact)
+	}
+
+	// The shared flags are persistent on the root, so subcommands inherit them.
+	for _, name := range []string{"snapshots-dir", "owner", "max-cores", "config-file", "log-file"} {
+		if rootCmd.PersistentFlags().Lookup(name) == nil {
+			t.Errorf("expected --%s to be a persistent root flag", name)
+		}
+	}
+}
+
+// TestSnapshotsSubcommandExecute runs the real cobra dispatch end-to-end for
+// the list and compact verbs (and the snaps/ls aliases) on an empty archive.
+func TestSnapshotsSubcommandExecute(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"list default", []string{"snapshots"}, "No snapshots found."},
+		{"list alias", []string{"snaps", "ls"}, "No snapshots found."},
+		{"compact dry-run", []string{"snapshots", "compact", "--dry-run"}, "Nothing to compact."},
+		{"compact", []string{"snapshots", "compact"}, "Nothing to compact."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			origDir := af.SnapshotsDir
+			t.Cleanup(func() {
+				af.SnapshotsDir = origDir
+				snapshotsDryRun = false
+				rootCmd.SetArgs(nil)
+				rootCmd.SetOut(nil)
+			})
+
+			var out strings.Builder
+			rootCmd.SetOut(&out)
+			rootCmd.SetArgs(append(tc.args, "--snapshots-dir", t.TempDir()))
+			if err := rootCmd.Execute(); err != nil {
+				t.Fatalf("Execute(%v): %v", tc.args, err)
+			}
+			if !strings.Contains(out.String(), tc.want) {
+				t.Errorf("Execute(%v) output %q, want it to contain %q", tc.args, out.String(), tc.want)
+			}
+		})
 	}
 }
 

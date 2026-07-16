@@ -46,6 +46,10 @@ type UI interface {
 	SetArchiveBrowsing(value bool)
 	SetCollapsePath(value bool)
 	SetExportThreshold(threshold int64)
+	SetSaveSnapshot(dir string, threshold int64)
+	SetAutoCompact(value bool)
+	SetSnapshotSelector(spec, root string)
+	SetSnapshotIdentity(root, host string, ts time.Time)
 	StartUILoop() error
 }
 
@@ -106,31 +110,59 @@ type Flags struct {
 	CollapsePath       bool     `yaml:"collapse-path"`
 	BrowseParentDirs   bool     `yaml:"browse-parent-dirs"`
 	ExportThreshold    string   `yaml:"export-threshold"`
+	SaveSnapshots      string   `yaml:"save-snapshots"`
+	NoAutoCompact      bool     `yaml:"no-auto-compact"`
+	SnapshotsDir       string   `yaml:"snapshots-dir"`
+	Owner              string   `yaml:"owner"`
+	Snapshot           string   `yaml:"-"`
+	SnapshotRoot       string   `yaml:"-"`
+	Baseline           string   `yaml:"-"`
+	BaselineRoot       string   `yaml:"-"`
+}
+
+// defaultSnapshotThreshold is the rollup threshold used for auto-saved snapshots
+// when --export-threshold is not set explicitly. Snapshots are for trend-tracking, so a
+// sensible non-zero default keeps them compact.
+const defaultSnapshotThreshold = 10 << 20 // 10 MiB
+
+// --save-snapshots tri-state values: "auto" saves interactive (TUI)
+// scans only, "always" saves in every mode, "never" disables saving.
+const (
+	saveSnapshotsAuto   = "auto"
+	saveSnapshotsAlways = "always"
+	saveSnapshotsNever  = "never"
+)
+
+// SaveSnapshotsEnabled resolves the --save-snapshots tri-state for this run:
+// "always" saves in every mode, "never" (and an unknown value, rejected earlier
+// in Run) never saves, and "auto" — the default, including an untouched empty
+// yaml key — saves exactly when the run is an interactive (TUI) one, where the
+// full tree is already in memory and saving is free.
+func (f *Flags) SaveSnapshotsEnabled(istty bool) bool {
+	switch f.SaveSnapshots {
+	case saveSnapshotsAlways:
+		return true
+	case saveSnapshotsNever:
+		return false
+	default: // "auto" and ""
+		return !f.ShouldRunInNonInteractiveMode(istty)
+	}
 }
 
 // ShouldRunInNonInteractiveMode checks if the application should run in non-interactive mode
 // based on the flags set.
 func (f *Flags) ShouldRunInNonInteractiveMode(istty bool) bool {
-	if f.NonInteractive {
-		return true
-	}
-
-	if f.Interactive {
-		return f.ShowVersion ||
-			f.OutputFile != "" ||
-			f.NoPrefix ||
-			f.NoProgress ||
-			f.Summarize ||
-			f.Top > 0
-	}
-
-	return !istty ||
-		f.ShowVersion ||
+	// These outputs only make sense non-interactively, --interactive or not.
+	nonInteractiveOnly := f.ShowVersion ||
 		f.OutputFile != "" ||
 		f.NoPrefix ||
 		f.NoProgress ||
 		f.Summarize ||
 		f.Top > 0
+
+	return f.NonInteractive ||
+		nonInteractiveOnly ||
+		(!f.Interactive && !istty)
 }
 
 // Style define style config
@@ -223,6 +255,22 @@ func (a *App) Run() error {
 		return fmt.Errorf("--interactive and --non-interactive cannot be used at once")
 	}
 
+	if a.Flags.Snapshot != "" && a.Flags.InputFile == "" && a.Flags.OutputFile != "" {
+		return fmt.Errorf("--snapshot without -f loads a snapshot from the archive; it cannot be combined with -o (which exports a live scan)")
+	}
+	switch a.Flags.SaveSnapshots {
+	case "", saveSnapshotsAuto, saveSnapshotsAlways, saveSnapshotsNever:
+	default:
+		return fmt.Errorf("invalid --save-snapshots %q (want auto, always, or never)", a.Flags.SaveSnapshots)
+	}
+
+	// --owner makes written output belong to the named user (resolves their home
+	// for the default snapshots-dir and chowns output to them). Applied before any
+	// action resolves the snapshots-dir or writes a file.
+	if err := a.applyOwner(); err != nil {
+		return err
+	}
+
 	path := a.getPath()
 	path, err := filepath.Abs(path)
 	if err != nil {
@@ -274,6 +322,33 @@ func (a *App) Run() error {
 		return fmt.Errorf("invalid --export-threshold value %q: %w", a.Flags.ExportThreshold, err)
 	}
 	ui.SetExportThreshold(threshold)
+	ui.SetSnapshotSelector(a.Flags.Snapshot, a.Flags.SnapshotRoot)
+
+	// The save-snapshots tri-state: "auto" (default) saves interactive scans,
+	// "always" saves in every mode, "never" doesn't. Saving still only triggers
+	// at live-scan completion — -f imports and device-list views never save.
+	if a.Flags.SaveSnapshotsEnabled(a.Istty) {
+		snapshotsDir, derr := a.resolveSnapshotsDir()
+		switch {
+		case derr != nil && a.Flags.SaveSnapshots == saveSnapshotsAlways:
+			// Saving was asked for explicitly; failing to place it is fatal.
+			return derr
+		case derr != nil:
+			// The implicit "auto" default must never stop plain `gdu` from
+			// running (e.g. no $HOME in a stripped-down environment).
+			log.Printf("save-snapshots disabled: %s", derr)
+		default:
+			saveThreshold := threshold
+			if saveThreshold <= 0 {
+				saveThreshold = defaultSnapshotThreshold
+			}
+			ui.SetSaveSnapshot(snapshotsDir, saveThreshold)
+			// Auto-compaction rides on the save (default on; --no-auto-compact
+			// opts out). Without a snapshot write there is no trigger, so it is
+			// inert whenever saving is off.
+			ui.SetAutoCompact(!a.Flags.NoAutoCompact)
+		}
+	}
 
 	// Set up time filter if any time flags are provided
 	if a.Flags.Since != "" || a.Flags.Until != "" || a.Flags.MaxAge != "" || a.Flags.MinAge != "" {
@@ -649,6 +724,12 @@ func (a *App) runAction(ui UI, path string) error {
 
 		if err := ui.ReadAnalysis(input); err != nil {
 			return fmt.Errorf("reading analysis: %w", err)
+		}
+	case a.Flags.Snapshot != "":
+		// --snapshot without -f: resolve the selector against the archive for
+		// snapshots of exactly this path and load the match — no disk scan.
+		if err := a.loadArchiveSnapshot(ui, path); err != nil {
+			return err
 		}
 	default:
 		if build.RootPathPrefix != "" {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -13,11 +14,14 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/dundee/gdu/v5/internal/common"
+	"github.com/dundee/gdu/v5/internal/testanalyze"
 	"github.com/dundee/gdu/v5/internal/testapp"
 	"github.com/dundee/gdu/v5/internal/testdev"
 	"github.com/dundee/gdu/v5/internal/testdir"
+	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
 	gfs "github.com/dundee/gdu/v5/pkg/fs"
+	"github.com/dundee/gdu/v5/stdout"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -26,7 +30,7 @@ func init() {
 }
 
 func TestVersion(t *testing.T) {
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{ShowVersion: true},
 		[]string{},
 		false,
@@ -55,8 +59,29 @@ func TestShouldRunInNonInteractiveModeInteractiveKeepsNonInteractiveOnlyFlags(t 
 	assert.True(t, flags.ShouldRunInNonInteractiveMode(false))
 }
 
+// TestSaveSnapshotsEnabledTruthTable pins the tri-state: auto (and the
+// empty value from an untouched yaml key) saves interactive scans only, always
+// saves everywhere, never saves nowhere.
+func TestSaveSnapshotsEnabledTruthTable(t *testing.T) {
+	interactive := func(mode string) *Flags { return &Flags{SaveSnapshots: mode} }
+	nonInteractive := func(mode string) *Flags { return &Flags{SaveSnapshots: mode, NonInteractive: true} }
+
+	for _, mode := range []string{"auto", ""} {
+		assert.True(t, interactive(mode).SaveSnapshotsEnabled(true), "%q must save interactively", mode)
+		assert.False(t, nonInteractive(mode).SaveSnapshotsEnabled(true), "%q must not save non-interactively", mode)
+		assert.False(t, interactive(mode).SaveSnapshotsEnabled(false), "%q must not save piped", mode)
+	}
+	assert.True(t, (&Flags{SaveSnapshots: "always"}).SaveSnapshotsEnabled(true))
+	assert.True(t, (&Flags{SaveSnapshots: "always", NonInteractive: true}).SaveSnapshotsEnabled(true))
+	assert.False(t, (&Flags{SaveSnapshots: "never"}).SaveSnapshotsEnabled(true))
+	assert.False(t, (&Flags{SaveSnapshots: "never", NonInteractive: true}).SaveSnapshotsEnabled(true))
+	// -o exports and --top runs count as non-interactive, so auto skips them.
+	assert.False(t, (&Flags{SaveSnapshots: "auto", OutputFile: "x.json"}).SaveSnapshotsEnabled(true))
+	assert.False(t, (&Flags{SaveSnapshots: "auto", Top: 5}).SaveSnapshotsEnabled(true))
+}
+
 func TestInteractiveAndNonInteractiveConflict(t *testing.T) {
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{Interactive: true, NonInteractive: true},
 		[]string{"."},
 		true,
@@ -71,7 +96,7 @@ func TestAnalyzePath(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null"},
 		[]string{"test_dir"},
 		false,
@@ -86,7 +111,7 @@ func TestAnalyzePathWithShowItemCountNonInteractive(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", ShowItemCount: true},
 		[]string{"test_dir"},
 		false,
@@ -101,7 +126,7 @@ func TestSequentialScanning(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", SequentialScanning: true},
 		[]string{"test_dir"},
 		false,
@@ -116,7 +141,7 @@ func TestFollowSymlinks(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", FollowSymlinks: true},
 		[]string{"test_dir"},
 		false,
@@ -131,7 +156,7 @@ func TestShowAnnexedSize(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", ShowAnnexedSize: true},
 		[]string{"test_dir"},
 		false,
@@ -146,7 +171,7 @@ func TestAnalyzePathProfiling(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", Profiling: true},
 		[]string{"test_dir"},
 		false,
@@ -161,7 +186,7 @@ func TestAnalyzePathWithIgnoring(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{
 			LogFile:           "/dev/null",
 			IgnoreDirPatterns: []string{"/(abc)+"},
@@ -180,7 +205,7 @@ func TestAnalyzePathWithIgnoringPatternError(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{
 			LogFile:           "/dev/null",
 			IgnoreDirPatterns: []string{"[[["},
@@ -199,7 +224,7 @@ func TestAnalyzePathWithIgnoringFromNotExistingFile(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{
 			LogFile:        "/dev/null",
 			IgnoreFromFile: "file",
@@ -218,7 +243,7 @@ func TestAnalyzePathWithGui(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null"},
 		[]string{"test_dir"},
 		true,
@@ -233,7 +258,7 @@ func TestAnalyzePathWithGuiNoColor(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", NoColor: true},
 		[]string{"test_dir"},
 		true,
@@ -248,7 +273,7 @@ func TestGuiShowMTimeAndItemCount(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", ShowItemCount: true, ShowMTime: true},
 		[]string{"test_dir"},
 		true,
@@ -263,7 +288,7 @@ func TestGuiNoDelete(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", NoDelete: true},
 		[]string{"test_dir"},
 		true,
@@ -278,7 +303,7 @@ func TestGuiNoViewFile(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", NoViewFile: true},
 		[]string{"test_dir"},
 		true,
@@ -293,7 +318,7 @@ func TestGuiNoSpawnShell(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", NoSpawnShell: true},
 		[]string{"test_dir"},
 		true,
@@ -308,7 +333,7 @@ func TestGuiDeleteInParallel(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", DeleteInParallel: true},
 		[]string{"test_dir"},
 		true,
@@ -323,7 +348,7 @@ func TestAnalyzePathWithGuiBackgroundDeletion(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", DeleteInBackground: true},
 		[]string{"test_dir"},
 		true,
@@ -338,7 +363,7 @@ func TestAnalyzePathWithDefaultSorting(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{
 			LogFile: "/dev/null",
 			Sorting: Sorting{
@@ -359,7 +384,7 @@ func TestAnalyzePathWithStyle(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{
 			LogFile: "/dev/null",
 			Style: Style{
@@ -405,7 +430,7 @@ func TestAnalyzePathNoUnicode(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{
 			LogFile:   "/dev/null",
 			NoUnicode: true,
@@ -426,7 +451,7 @@ func TestAnalyzePathWithExport(t *testing.T) {
 		os.Remove("output.json")
 	}()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", OutputFile: "output.json"},
 		[]string{"test_dir"},
 		true,
@@ -441,7 +466,7 @@ func TestAnalyzePathWithChdir(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{
 			LogFile:   "/dev/null",
 			ChangeCwd: true,
@@ -456,7 +481,7 @@ func TestAnalyzePathWithChdir(t *testing.T) {
 }
 
 func TestReadAnalysisFromFile(t *testing.T) {
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", InputFile: "../../../internal/testdata/test.json"},
 		[]string{"test_dir"},
 		false,
@@ -469,7 +494,7 @@ func TestReadAnalysisFromFile(t *testing.T) {
 }
 
 func TestReadWrongAnalysisFromFile(t *testing.T) {
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", InputFile: "../../../internal/testdata/wrong.json"},
 		[]string{"test_dir"},
 		false,
@@ -481,7 +506,7 @@ func TestReadWrongAnalysisFromFile(t *testing.T) {
 }
 
 func TestWrongCombinationOfPrefixes(t *testing.T) {
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{NoPrefix: true, UseSIPrefix: true},
 		[]string{"test_dir"},
 		false,
@@ -493,7 +518,7 @@ func TestWrongCombinationOfPrefixes(t *testing.T) {
 }
 
 func TestReadWrongAnalysisFromNotExistingFile(t *testing.T) {
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", InputFile: "xxx.json"},
 		[]string{"test_dir"},
 		false,
@@ -529,7 +554,7 @@ func TestNoCross(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", NoCross: true},
 		[]string{"test_dir"},
 		false,
@@ -544,7 +569,7 @@ func TestListDevices(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", ShowDisks: true},
 		[]string{},
 		false,
@@ -562,7 +587,7 @@ func TestListDevicesToFile(t *testing.T) {
 		os.Remove("output.json")
 	}()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", ShowDisks: true, OutputFile: "output.json"},
 		[]string{},
 		false,
@@ -577,7 +602,7 @@ func TestListDevicesWithGui(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", ShowDisks: true},
 		[]string{},
 		true,
@@ -589,7 +614,7 @@ func TestListDevicesWithGui(t *testing.T) {
 }
 
 func TestMaxCores(t *testing.T) {
-	_, err := runApp(
+	_, err := runApp(t,
 		&Flags{LogFile: "/dev/null", MaxCores: 1},
 		[]string{},
 		true,
@@ -604,7 +629,7 @@ func TestMaxCoresHighEdge(t *testing.T) {
 	if runtime.NumCPU() < 2 {
 		t.Skip("Skipping on a single core CPU")
 	}
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", MaxCores: runtime.NumCPU() + 1},
 		[]string{},
 		true,
@@ -620,7 +645,7 @@ func TestMaxCoresLowEdge(t *testing.T) {
 	if runtime.NumCPU() < 2 {
 		t.Skip("Skipping on a single core CPU")
 	}
-	out, err := runApp(
+	out, err := runApp(t,
 		&Flags{LogFile: "/dev/null", MaxCores: -100},
 		[]string{},
 		true,
@@ -652,10 +677,14 @@ func (m *uiTimeFilterMock) SetAnalyzer(analyzer common.Analyzer)              {}
 func (m *uiTimeFilterMock) SetTimeFilter(timeFilter common.TimeFilter) {
 	m.timeFilter = timeFilter
 }
-func (m *uiTimeFilterMock) SetArchiveBrowsing(value bool)      {}
-func (m *uiTimeFilterMock) SetCollapsePath(value bool)         {}
-func (m *uiTimeFilterMock) SetExportThreshold(threshold int64) {}
-func (m *uiTimeFilterMock) StartUILoop() error                 { return nil }
+func (m *uiTimeFilterMock) SetArchiveBrowsing(value bool)                       {}
+func (m *uiTimeFilterMock) SetCollapsePath(value bool)                          {}
+func (m *uiTimeFilterMock) SetExportThreshold(threshold int64)                  {}
+func (m *uiTimeFilterMock) SetSaveSnapshot(dir string, threshold int64)         {}
+func (m *uiTimeFilterMock) SetAutoCompact(value bool)                           {}
+func (m *uiTimeFilterMock) SetSnapshotSelector(spec, root string)               {}
+func (m *uiTimeFilterMock) SetSnapshotIdentity(root, host string, ts time.Time) {}
+func (m *uiTimeFilterMock) StartUILoop() error                                  { return nil }
 
 func TestSetTimeFiltersInvalid(t *testing.T) {
 	a := &App{Flags: &Flags{Since: "not-a-date"}}
@@ -680,8 +709,182 @@ func TestSetTimeFiltersSetsFilter(t *testing.T) {
 	}
 }
 
+func TestCompactSnapshotsEmptyArchive(t *testing.T) {
+	buff := bytes.NewBufferString("")
+	a := &App{Flags: &Flags{SnapshotsDir: t.TempDir(), LogFile: "/dev/null"}, Writer: buff}
+
+	assert.Nil(t, a.CompactSnapshots(false))
+	assert.Contains(t, buff.String(), "Nothing to compact.")
+}
+
+func TestCompactSnapshotsDryRunEmptyArchive(t *testing.T) {
+	buff := bytes.NewBufferString("")
+	a := &App{Flags: &Flags{SnapshotsDir: t.TempDir(), LogFile: "/dev/null"}, Writer: buff}
+
+	assert.Nil(t, a.CompactSnapshots(true))
+	assert.Contains(t, buff.String(), "Nothing to compact.")
+}
+
+// TestSaveSnapshotsAutoCompactsByDefault: auto-compaction now rides on every
+// snapshot save unless --no-auto-compact.
+func TestSaveSnapshotsAutoCompactsByDefault(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	snapshotsDir := t.TempDir()
+	// A loose daily from January 2000 — a month closed forever — so the
+	// post-save auto-compaction has work to do.
+	assert.Nil(t, testanalyze.WriteClosedMonthSnapshot(snapshotsDir))
+
+	_, err := runApp(t,
+		&Flags{LogFile: "/dev/null", SaveSnapshots: "always", SnapshotsDir: snapshotsDir},
+		[]string{"test_dir"}, false, testdev.DevicesInfoGetterMock{},
+	)
+	assert.Nil(t, err)
+
+	entries, err := os.ReadDir(snapshotsDir)
+	assert.Nil(t, err)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	assert.Contains(t, names, "monthly_2000-01_data.parquet")
+	assert.NotContains(t, names, "snapshot_20000115T120000_data.parquet")
+	assert.Len(t, names, 2) // the monthly + today's snapshot
+}
+
+// TestNoAutoCompactLeavesArchiveAlone: --no-auto-compact opts out of the
+// post-save compaction; the closed-month daily must survive.
+func TestNoAutoCompactLeavesArchiveAlone(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	snapshotsDir := t.TempDir()
+	assert.Nil(t, testanalyze.WriteClosedMonthSnapshot(snapshotsDir))
+
+	_, err := runApp(t,
+		&Flags{LogFile: "/dev/null", SaveSnapshots: "always", NoAutoCompact: true, SnapshotsDir: snapshotsDir},
+		[]string{"test_dir"}, false, testdev.DevicesInfoGetterMock{},
+	)
+	assert.Nil(t, err)
+
+	entries, err := os.ReadDir(snapshotsDir)
+	assert.Nil(t, err)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	assert.Contains(t, names, "snapshot_20000115T120000_data.parquet")
+	assert.Len(t, names, 2) // the untouched daily + today's snapshot
+}
+
+// TestSaveSnapshotsNonInteractiveTruthTable pins the tri-state end-to-end for the
+// non-interactive path: only "always" writes a snapshot; "auto" (the default),
+// an empty value, and "never" leave the archive untouched.
+func TestSaveSnapshotsNonInteractiveTruthTable(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode string
+		wantSaved  bool
+	}{
+		{"auto", saveSnapshotsAuto, false},
+		{"never", saveSnapshotsNever, false},
+		{"empty", "", false},
+		{"always", saveSnapshotsAlways, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fin := testdir.CreateTestDir()
+			defer fin()
+
+			snapshotsDir := filepath.Join(t.TempDir(), "snapshots")
+			_, err := runApp(t,
+				&Flags{LogFile: "/dev/null", SaveSnapshots: tc.mode, SnapshotsDir: snapshotsDir},
+				[]string{"test_dir"}, false, testdev.DevicesInfoGetterMock{},
+			)
+			assert.Nil(t, err)
+
+			entries, err := os.ReadDir(snapshotsDir)
+			if tc.wantSaved {
+				assert.Nil(t, err)
+				assert.Len(t, entries, 1, "save-snapshots=%q must write a snapshot", tc.mode)
+			} else {
+				assert.True(t, os.IsNotExist(err),
+					"save-snapshots=%q must not even create the snapshots dir", tc.mode)
+			}
+		})
+	}
+}
+
+// TestSaveSnapshotsAlwaysForcesFullAnalyzer: the non-interactive default
+// TopDirAnalyzer keeps only top-level totals, so enabling the save must swap
+// in the full-tree analyzer (stdout.SetSaveSnapshot does it), and a non-saving
+// auto run keeps the constant-memory default.
+func TestSaveSnapshotsAlwaysForcesFullAnalyzer(t *testing.T) {
+	makeUI := func(mode string) *stdout.UI {
+		a := &App{Flags: &Flags{SaveSnapshots: mode}, Istty: false, Writer: bytes.NewBufferString("")}
+		ui, err := a.createUI()
+		assert.Nil(t, err)
+		stdoutUI, ok := ui.(*stdout.UI)
+		assert.True(t, ok)
+		if a.Flags.SaveSnapshotsEnabled(a.Istty) {
+			// what Run does when saving is on
+			ui.SetSaveSnapshot(t.TempDir(), 1)
+		}
+		return stdoutUI
+	}
+
+	assert.IsType(t, &analyze.ParallelAnalyzer{}, makeUI("always").Analyzer)
+	assert.IsType(t, &analyze.TopDirAnalyzer{}, makeUI("auto").Analyzer)
+}
+
+// TestSaveSnapshotsRejectsInvalidValue checks the tri-state is validated before
+// any scan runs: an unknown value is a usage error, not silently treated as off.
+func TestSaveSnapshotsRejectsInvalidValue(t *testing.T) {
+	_, err := runApp(t,
+		&Flags{LogFile: "/dev/null", SaveSnapshots: "sometimes"},
+		[]string{}, false, testdev.DevicesInfoGetterMock{},
+	)
+
+	assert.ErrorContains(t, err, "invalid --save-snapshots")
+}
+
+// TestRunAppSandboxesSnapshotsDir is the regression guard for Finding 1: because
+// save-snapshots defaults to "auto" (which records interactive scans), the
+// shared runApp helper must divert an unset SnapshotsDir to a per-test temp dir.
+// If that sandbox is ever removed, an interactive scan would save into — and
+// auto-compact — the user's real ~/.local/share/gdu/snapshots archive. Assert
+// the helper never leaves an interactive run pointed at the real archive.
+func TestRunAppSandboxesSnapshotsDir(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	realDir, err := (&App{Flags: &Flags{}}).resolveSnapshotsDir()
+	assert.NoError(t, err)
+
+	// Default flags: save-snapshots is "auto" and SnapshotsDir is unset.
+	flags := &Flags{LogFile: "/dev/null"}
+	_, err = runApp(t, flags, []string{"test_dir"}, true, testdev.DevicesInfoGetterMock{})
+	assert.NoError(t, err)
+
+	assert.NotEmpty(t, flags.SnapshotsDir, "runApp must divert an unset SnapshotsDir to a sandbox temp dir")
+	assert.NotEqual(t, realDir, flags.SnapshotsDir,
+		"interactive scan under save-snapshots=auto must not target the real archive %s", realDir)
+}
+
+// runApp builds and runs an App for a test and returns its captured output.
+//
+// It sandboxes snapshot recording: unless the test sets SnapshotsDir itself,
+// it is defaulted to a per-test t.TempDir(). This matters because
+// save-snapshots defaults to "auto", which saves interactive (istty) scans —
+// so without this an interactive test would write a real snapshot into the
+// user's ~/.local/share/gdu/snapshots archive (and auto-compact it). Defaulting
+// here means no test can regress into touching the real archive.
+//
 // nolint: unparam // Why: it's used in linux tests
-func runApp(flags *Flags, args []string, istty bool, getter device.DevicesInfoGetter) (output string, err error) {
+func runApp(t *testing.T, flags *Flags, args []string, istty bool, getter device.DevicesInfoGetter) (output string, err error) {
+	t.Helper()
+	if flags.SnapshotsDir == "" {
+		flags.SnapshotsDir = t.TempDir()
+	}
 	buff := bytes.NewBufferString("")
 
 	app := App{
