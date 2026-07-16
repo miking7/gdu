@@ -62,6 +62,13 @@ Apple-notarized, so Gatekeeper quarantines them and the first run is blocked. Cl
 `xattr -d com.apple.quarantine gdu`. The `curl` route above sets no quarantine flag and needs no such
 step.
 
+**On macOS, if you granted gdu Full Disk Access** — needed for whole-disk root scans to see
+TCC-protected folders (Mail, Messages, other users' homes) — **you must re-grant it after every
+update.** The grant is pinned to the binary's exact contents, so replacing the binary silently voids
+it, and scans go back to under-reporting those folders without any error. Remove the old Full Disk
+Access entry and add the new binary again. See
+[docs/scheduling.md](./docs/scheduling.md#step-1--give-gdu-full-disk-access-do-this-first).
+
 Each release also carries a `checksums.txt` to verify a download against:
 
 ```sh

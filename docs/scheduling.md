@@ -105,8 +105,10 @@ A whole-disk scan reaches TCC-protected places (Mail, Messages, other users' hom
 Disk Access (FDA), gdu silently hits "operation not permitted" there and under-reports. A scheduled
 job has no Terminal to borrow FDA from, so you grant it to the **gdu binary itself**.
 
-FDA is pinned to the *exact* binary, and Homebrew upgrades replace the binary (breaking the grant), so
-first copy gdu to a stable path you control. `/usr/local/sbin` is a good spot — it sits outside
+FDA is pinned to the *exact* binary, and **any** update replaces it and breaks the grant — including
+re-running the install snippet in [README § Installation](../README.md#installation), which overwrites
+`/usr/local/bin/gdu` in place. So first copy gdu to a stable path you control. `/usr/local/sbin` is a
+good spot — it's separate from the `/usr/local/bin` the install snippet writes to, and outside
 Homebrew's tree (Intel Homebrew uses `/usr/local/bin`; Apple Silicon uses `/opt/homebrew`), so nothing
 overwrites your copy — but it often doesn't exist yet (`cp` won't create it), so make it first:
 
@@ -126,7 +128,9 @@ Then grant FDA to `/usr/local/sbin/gdu`:
 
 > **Maintenance caveat (important):** the grant is tied to the binary's contents. **Every time you
 > update gdu, re-copy it to `/usr/local/sbin/gdu` and re-add it to Full Disk Access** (remove the old
-> entry and add it again). There is no way around this for a locally built / Homebrew binary.
+> entry and add it again). Skip it and nothing breaks loudly — the scan just silently goes back to
+> under-reporting the protected folders, which is the failure mode FDA existed to fix. There is no way
+> around this for an unsigned binary, which is what the releases ship.
 >
 > **If the picker refuses to add the binary** (reported on the very newest macOS), the fallback is to
 > wrap gdu in a small **Automator "Application"** (one "Run Shell Script" action calling
