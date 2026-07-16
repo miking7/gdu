@@ -32,19 +32,49 @@ However HDDs work as well, but the performance gain is not so huge.
 
 ## Installation
 
-Head for the [releases page](https://github.com/dundee/gdu/releases) and download the binary for your system.
+This fork publishes binaries for macOS and Linux (x86-64 and arm64) on its
+[releases page](https://github.com/miking7/gdu/releases). These four lines fetch the right one for
+your machine, so you don't have to work out which that is:
 
-Using curl:
+```sh
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+curl -L "https://github.com/miking7/gdu/releases/latest/download/gdu_${OS}_${ARCH}.tar.gz" | tar xz gdu
+sudo install gdu /usr/local/bin/gdu
+```
 
-    curl -L https://github.com/dundee/gdu/releases/latest/download/gdu_linux_amd64.tgz | tar xz
-    chmod +x gdu_linux_amd64
-    mv gdu_linux_amd64 /usr/bin/gdu
+Re-run the same four lines to **update** — they always resolve to the current release. To uninstall,
+`sudo rm /usr/local/bin/gdu` (saved snapshots live in `~/.local/share/gdu/snapshots`; remove that
+directory too if you want them gone).
 
-See the [installation page](./INSTALL.md) for other ways how to install Gdu to your system.
+To pick a build by hand instead, run `uname -sm` and match it:
 
-Or you can use Gdu directly via Docker:
+| `uname -sm` | Download |
+|---|---|
+| `Darwin arm64` | `gdu_darwin_arm64.tar.gz` — Apple Silicon |
+| `Darwin x86_64` | `gdu_darwin_amd64.tar.gz` — Intel Mac |
+| `Linux x86_64` | `gdu_linux_amd64.tar.gz` |
+| `Linux aarch64` | `gdu_linux_arm64.tar.gz` |
 
-    docker run --rm --init --interactive --tty --privileged --volume /:/mnt/root ghcr.io/dundee/gdu /mnt/root
+**On macOS, if you download through a browser** rather than with `curl`: the binaries are not
+Apple-notarized, so Gatekeeper quarantines them and the first run is blocked. Clear it once with
+`xattr -d com.apple.quarantine gdu`. The `curl` route above sets no quarantine flag and needs no such
+step.
+
+Each release also carries a `checksums.txt` to verify a download against:
+
+```sh
+shasum -a 256 -c checksums.txt   # macOS
+sha256sum -c checksums.txt       # Linux
+```
+
+Windows isn't published as a binary; it still builds from source with `go build ./cmd/gdu`.
+
+> **Note:** the packaged channels — `brew install gdu`, `apt install gdu`, snap, pacman, winget, and
+> `go install github.com/dundee/gdu/v5/cmd/gdu@latest` — all install
+> [**upstream** gdu](https://github.com/dundee/gdu), which does **not** include this fork's snapshot
+> history. This fork is distributed as the binaries above only. See [FORK.md](./FORK.md) for what it
+> adds.
 
 ## Usage
 

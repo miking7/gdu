@@ -12,13 +12,19 @@ new base (e.g. `v5.36.1-parquet.2` → merge upstream v5.37.0 → `v5.37.0-parqu
 
 1. `make lint && make test`, commit everything, push `master`
 2. optional local rehearsal: `goreleaser release --snapshot --clean` (artifacts in `dist/`)
-3. tag: `git tag -sa v5.36.1-parquet.1 -m "gdu v5.36.1-parquet.1"`
+3. tag: `git tag -a v5.36.1-parquet.2 -m "gdu v5.36.1-parquet.2"` — plain `-a`, not `-sa`:
+   no GPG signing key is configured, and `-sa` fails outright rather than falling back
+   (nothing in the release path checks tag signatures)
 4. push **the tag by name** — never `git push --tags`; the repo carries upstream's v5.x
    tags (the workflow's `v*-parquet*` filter is the backstop):
-   `git push origin v5.36.1-parquet.1`
+   `git push origin v5.36.1-parquet.2`
 5. the Release workflow runs tests, cross-builds, and creates a **draft** release with
    auto-generated notes
 6. review the draft under GitHub → Releases, then **Publish**
+
+If the workflow goes red on the test step, suspect the known flaky `cmd/gdu/app` GUI tests
+before believing it: re-run the failed job from the Actions tab — the tag is unchanged, so
+no re-tagging is needed.
 
 Stable download URLs (archive names carry no version):
 `https://github.com/miking7/gdu/releases/latest/download/gdu_<os>_<arch>.tar.gz`
