@@ -16,56 +16,64 @@ import (
 var (
 	helpDisabledSuffix = " (disabled)"
 
-	helpText = `     [::b]up/down, k/j    [white:black:-]Move cursor up/down
+	helpText = `Navigate:
+    [::b]up/down, k/j     [white:black:-]Move cursor up/down
   [::b]pgup/pgdn, g/G     [white:black:-]Move cursor top/bottom
  [::b]enter, right, l     [white:black:-]Go to directory/device
          [::b]left, h     [white:black:-]Go to parent directory
-
-               [::b]r     [white:black:-]Rescan current directory
-               [::b]E     [white:black:-]Export analysis data to file as JSON
                [::b]/     [white:black:-]Search items by name
                [::b]T     [white:black:-]Filter items by file type (extension)
-               [::b]a     [white:black:-]Toggle between showing disk usage and apparent size
-               [::b]B     [white:black:-]Toggle bar alignment to biggest file or directory
-               [::b]c     [white:black:-]Show/hide file count
-               [::b]m     [white:black:-]Show/hide latest mtime
-               [::b]b     [white:black:-]Spawn shell in current directory
                [::b]q     [white:black:-]Quit gdu (asks to confirm after a long scan)
                [::b]Q     [white:black:-]Quit gdu and print current directory path
 
-Item under cursor:
+History — view & compare (snapshot views are read-only; d/e offer to go live):
+               [::b][     [white:black:-]Step to an older snapshot of this folder
+               [::b]]     [white:black:-]Step to a newer snapshot; at the newest, back to live
+               [::b]S     [white:black:-]Compare: pick a baseline snapshot (then >/< sort growth)
+               [::b]O     [white:black:-]Open any archived snapshot as the view
+             [::b]Esc     [white:black:-]Clear the baseline, else return where you started
+
+Act on items:
                [::b]d     [white:black:-]Delete file or directory
                [::b]e     [white:black:-]Empty file or directory
-			   [::b]space [white:black:-]Mark file or directory for deletion
-			   [::b]p     [white:black:-]Print marked items paths to stdout after quitting
-			   [::b]I     [white:black:-]Ignore file or directory
+           [::b]space     [white:black:-]Mark file or directory for deletion
+               [::b]p     [white:black:-]Print marked items paths to stdout after quitting
+               [::b]I     [white:black:-]Ignore file or directory
                [::b]v     [white:black:-]Show content of file
                [::b]o     [white:black:-]Open file or directory in external program
                [::b]i     [white:black:-]Show info about item
+               [::b]r     [white:black:-]Rescan current directory
+               [::b]E     [white:black:-]Export analysis data to file as JSON
+               [::b]b     [white:black:-]Spawn shell in current directory
 
-Sort by (twice toggles asc/desc):
+Sort & display:
                [::b]n     [white:black:-]Sort by name (asc/desc)
                [::b]s     [white:black:-]Sort by size (asc/desc)
                [::b]C     [white:black:-]Sort by file count (asc/desc)
-               [::b]M     [white:black:-]Sort by mtime (asc/desc)`
+               [::b]M     [white:black:-]Sort by mtime (asc/desc)
+               [::b]a     [white:black:-]Toggle between showing disk usage and apparent size
+               [::b]B     [white:black:-]Toggle bar alignment to biggest file or directory
+               [::b]c     [white:black:-]Show/hide file count
+               [::b]m     [white:black:-]Show/hide latest mtime`
 )
 
-// currentDirLabelText builds the breadcrumb label shown above the table,
-// annotated when a mid-scan preview is being displayed.
-func (ui *UI) currentDirLabelText() string {
-	label := "[::b] --- " +
-		tview.Escape(
-			strings.TrimPrefix(ui.currentDirPath, build.RootPathPrefix),
-		) +
-		" ---"
+// previewLabelSuffix annotates the directory-label line while a mid-scan
+// preview is shown, so its read-only, point-in-time nature — and the key to
+// leave it — stays visible.
+func (ui *UI) previewLabelSuffix() string {
 	if ui.previewing {
-		label += "  [::b][yellow]scanning… (preview, Tab to resume)[-]"
+		return "  [yellow]scanning… (preview, Tab to resume)[-]"
 	}
-	return label
+	return ""
 }
 
-// nolint: funlen // Why: complex function
+//nolint:funlen,gocyclo // Why: complex single-pass table build
 func (ui *UI) showDir() {
+	if ui.inDiffMode() {
+		ui.showDiffDir()
+		return
+	}
+
 	var (
 		totalUsage int64
 		totalSize  int64
@@ -84,7 +92,11 @@ func (ui *UI) showDir() {
 		log.Printf("changing cwd to %s", ui.currentDirPath)
 	}
 
-	ui.currentDirLabel.SetText(ui.currentDirLabelText()).SetDynamicColors(true)
+	ui.currentDirLabel.SetText("[::b]" + ui.dirLabelPrefix() + " --- " +
+		tview.Escape(
+			strings.TrimPrefix(ui.currentDirPath, build.RootPathPrefix),
+		) +
+		" ---" + ui.previewLabelSuffix()).SetDynamicColors(true)
 
 	ui.table.Clear()
 
@@ -215,7 +227,7 @@ func (ui *UI) showDir() {
 			ui.footerBackgroundColor,
 		)
 	} else {
-		footerNumberColor = "[black:white:b]"
+		footerNumberColor = blackOnWhiteBold
 		footerTextColor = blackOnWhite
 	}
 
@@ -229,19 +241,25 @@ func (ui *UI) showDir() {
 
 	typeFilterText := ui.formatTypeFilterInfo(footerNumberColor, footerTextColor)
 
-	ui.footerLabel.SetText(
-		selected + footerTextColor +
-			" Total disk usage: " +
-			footerNumberColor +
-			ui.formatSize(totalUsage, true, false) +
-			" Apparent size: " +
-			footerNumberColor +
-			ui.formatSize(totalSize, true, false) +
-			" Items: " + footerNumberColor + fmt.Sprintf("%d", itemCount) +
-			footerTextColor +
-			" Sorting by: " + ui.sortBy + " " + ui.sortOrder +
-			typeFilterText +
-			timeFilterText)
+	if !ui.viewIsLive() {
+		// Snapshot Views answer "when am I looking at": the footer shows
+		// this folder's size at the viewed moment.
+		ui.setFooter(ui.snapshotFooter())
+	} else {
+		ui.setFooter(
+			selected + footerTextColor +
+				" Total disk usage: " +
+				footerNumberColor +
+				ui.formatSize(totalUsage, true, false) +
+				" Apparent size: " +
+				footerNumberColor +
+				ui.formatSize(totalSize, true, false) +
+				" Items: " + footerNumberColor + fmt.Sprintf("%d", itemCount) +
+				footerTextColor +
+				" Sorting by: " + ui.sortBy + " " + ui.sortOrder +
+				typeFilterText +
+				timeFilterText)
+	}
 
 	ui.table.Select(0, 0)
 	ui.table.ScrollToBeginning()
@@ -255,32 +273,16 @@ func (ui *UI) showDevices() {
 	var totalUsage int64
 
 	ui.table.Clear()
-	ui.table.SetCell(0, 0, tview.NewTableCell("Device name").SetSelectable(false))
-	ui.table.SetCell(0, 1, tview.NewTableCell("Size").SetSelectable(false))
-	ui.table.SetCell(0, 2, tview.NewTableCell("Used").SetSelectable(false))
-	ui.table.SetCell(0, 3, tview.NewTableCell("Used part").SetSelectable(false))
-	ui.table.SetCell(0, 4, tview.NewTableCell("Free").SetSelectable(false))
-	ui.table.SetCell(0, 5, tview.NewTableCell("Mount point").SetSelectable(false))
+	setDeviceHeaderCells(ui.table, deviceMountCol)
 
-	var textColor, sizeColor string
-	if ui.UseColors {
-		textColor = "[#3498db:-:b]"
-		sizeColor = "[#edb20a:-:b]"
-	} else {
-		textColor = "[white:-:b]"
-		sizeColor = "[white:-:b]"
-	}
+	nameColor, sizeColor := ui.deviceTableColors()
 
 	ui.sortDevices()
 
+	mountWidth := ui.deviceMountWidth(ui.devices, false)
 	for i, device := range ui.devices {
 		totalUsage += device.GetUsage()
-		ui.table.SetCell(i+1, 0, tview.NewTableCell(textColor+device.Name).SetReference(ui.devices[i]))
-		ui.table.SetCell(i+1, 1, tview.NewTableCell(ui.formatSize(device.Size, false, true)))
-		ui.table.SetCell(i+1, 2, tview.NewTableCell(sizeColor+ui.formatSize(device.Size-device.Free, false, true)))
-		ui.table.SetCell(i+1, 3, tview.NewTableCell(getDeviceUsagePart(device, ui.useOldSizeBar)))
-		ui.table.SetCell(i+1, 4, tview.NewTableCell(ui.formatSize(device.Free, false, true)))
-		ui.table.SetCell(i+1, 5, tview.NewTableCell(textColor+device.MountPoint).SetReference(ui.devices[i]))
+		ui.setDeviceRowCells(ui.table, i+1, deviceMountCol, mountWidth, ui.devices[i], nameColor, sizeColor)
 	}
 
 	var footerNumberColor, footerTextColor string
@@ -296,11 +298,11 @@ func (ui *UI) showDevices() {
 			ui.footerBackgroundColor,
 		)
 	} else {
-		footerNumberColor = "[black:white:b]"
+		footerNumberColor = blackOnWhiteBold
 		footerTextColor = blackOnWhite
 	}
 
-	ui.footerLabel.SetText(
+	ui.setFooter(
 		" Total usage: " +
 			footerNumberColor +
 			ui.formatSize(totalUsage, true, false) +

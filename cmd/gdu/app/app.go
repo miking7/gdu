@@ -256,6 +256,13 @@ func (a *App) Run() error {
 		return fmt.Errorf("--interactive and --non-interactive cannot be used at once")
 	}
 
+	if a.Flags.Baseline != "" &&
+		(a.Flags.OutputFile != "" || a.Flags.ShouldRunInNonInteractiveMode(a.Istty)) {
+		return fmt.Errorf("--baseline (growth-diff) is only supported in interactive mode")
+	}
+	if a.Flags.BaselineRoot != "" && a.Flags.Baseline == "" {
+		return fmt.Errorf("--baseline-root is only meaningful together with --baseline")
+	}
 	if a.Flags.Snapshot != "" && a.Flags.InputFile == "" && a.Flags.OutputFile != "" {
 		return fmt.Errorf("--snapshot without -f loads a snapshot from the archive; it cannot be combined with -o (which exports a live scan)")
 	}
@@ -278,7 +285,7 @@ func (a *App) Run() error {
 		return err
 	}
 
-	ui, err = a.createUI()
+	ui, err = a.createUI(path)
 	if err != nil {
 		return err
 	}
@@ -473,7 +480,9 @@ func (a *App) setTimeFilters(ui UI) error {
 	return nil
 }
 
-func (a *App) createUI() (UI, error) {
+// createUI picks and configures the UI for this run. path is the absolutized
+// positional path — the baseline selector's covering scope is anchored to it.
+func (a *App) createUI(path string) (UI, error) {
 	var ui UI
 	var err error
 
@@ -543,6 +552,14 @@ func (a *App) createUI() (UI, error) {
 		ui = stdoutUI
 	default:
 		opts := a.getOptions()
+
+		baselineOpt, berr := a.baselineOption(path)
+		if berr != nil {
+			return nil, berr
+		}
+		if baselineOpt != nil {
+			opts = append(opts, baselineOpt)
+		}
 
 		ui = tui.CreateUI(
 			a.TermApp,
@@ -703,7 +720,29 @@ func (a *App) getOptions() []tui.Option {
 	opts = append(opts, func(ui *tui.UI) {
 		ui.SetShowDiskProgressBar(a.Flags.Style.ProgressModal.ShowDiskProgressBar)
 	})
+	// The S baseline picker lists snapshots from the archive even without
+	// --save-snapshots, so wire the resolved snapshots-dir through unconditionally.
+	if snapshotsDir, derr := a.resolveSnapshotsDir(); derr == nil {
+		opts = append(opts, func(ui *tui.UI) {
+			ui.SetSnapshotsDir(snapshotsDir)
+		})
+	}
 	return opts
+}
+
+// baselineOption resolves --baseline (a snapshot file path, or a selector
+// against the archive scoped to roots covering path) and returns a UI option
+// that enters diff mode against it. Returns nil (no option, no error) when
+// --baseline is unset.
+func (a *App) baselineOption(path string) (tui.Option, error) {
+	if a.Flags.Baseline == "" {
+		return nil, nil
+	}
+	b, info, err := a.resolveBaseline(path)
+	if err != nil {
+		return nil, fmt.Errorf("loading baseline: %w", err)
+	}
+	return func(ui *tui.UI) { ui.SetBaseline(b, &info) }, nil
 }
 
 func (a *App) setNoCross(path string) error {

@@ -24,6 +24,7 @@ func (ui *UI) fileItemMarked(row int) {
 
 func (ui *UI) deleteMarked(shouldEmpty bool) {
 	var action, acting string
+	ui.markLiveDiverged()
 	if shouldEmpty {
 		action = actionEmpty
 		acting = actingEmpty

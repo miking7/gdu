@@ -91,11 +91,24 @@ func (app *MockedApp) QueueUpdateDraw(f func()) *tview.Application {
 	return nil
 }
 
-// QueueUpdateDraw does nothing
+// GetUpdateDraws drains and returns the queued update closures. Draining
+// matters: tests run these to simulate the event loop, and re-running an
+// already-executed closure on a later call would replay stale UI state (a
+// real event loop runs each exactly once).
 func (app *MockedApp) GetUpdateDraws() []func() {
 	app.mutex.Lock()
 	defer app.mutex.Unlock()
-	return app.updateDraws
+	pending := app.updateDraws
+	app.updateDraws = make([]func(), 0, 1)
+	return pending
+}
+
+// PendingDrawCount reports how many queued update closures are waiting,
+// without consuming them — for tests that poll for an async queue.
+func (app *MockedApp) PendingDrawCount() int {
+	app.mutex.Lock()
+	defer app.mutex.Unlock()
+	return len(app.updateDraws)
 }
 
 // SetBeforeDrawFunc does nothing

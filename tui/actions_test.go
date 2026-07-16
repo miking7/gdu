@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -147,6 +148,68 @@ func TestAnalyzePathWithParentDir(t *testing.T) {
 	assert.Equal(t, 5, ui.table.GetRowCount())
 	assert.Contains(t, ui.table.GetCell(0, 0).Text, "/..")
 	assert.Contains(t, ui.table.GetCell(1, 0).Text, "ddd")
+}
+
+func TestAnalyzePathSaveSnapshot(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	simScreen := testapp.CreateSimScreen()
+	defer simScreen.Fini()
+
+	snapshotsDir := t.TempDir()
+
+	app := testapp.CreateMockedApp(true)
+	ui := CreateUI(app, simScreen, &bytes.Buffer{}, false, true, true, true)
+	ui.SetSaveSnapshot(snapshotsDir, 0)
+	ui.done = make(chan struct{})
+	err := ui.AnalyzePath("test_dir", nil)
+	assert.Nil(t, err)
+
+	<-ui.done // the snapshot is written before the analyzer signals done
+
+	entries, err := os.ReadDir(snapshotsDir)
+	assert.Nil(t, err)
+	assert.Len(t, entries, 1)
+	assert.Regexp(t, `^snapshot_.*\.parquet$`, entries[0].Name())
+}
+
+// TestAnalyzePathSaveSnapshotAnnouncesOnDirCreation: the save that creates the
+// archive directory flashes the announce in the header; a save into an
+// existing archive stays quiet.
+func TestAnalyzePathSaveSnapshotAnnouncesOnDirCreation(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	simScreen := testapp.CreateSimScreen()
+	defer simScreen.Fini()
+
+	snapshotsDir := filepath.Join(t.TempDir(), "snapshots") // does not exist yet
+
+	app := testapp.CreateMockedApp(true)
+	ui := CreateUI(app, simScreen, &bytes.Buffer{}, false, true, true, true)
+	ui.SetSaveSnapshot(snapshotsDir, 0)
+	ui.done = make(chan struct{})
+	assert.Nil(t, ui.AnalyzePath("test_dir", nil))
+	<-ui.done
+
+	for _, f := range ui.app.(*testapp.MockedApp).GetUpdateDraws() {
+		f()
+	}
+	assert.Contains(t, ui.header.GetText(false), "saving snapshots to")
+	assert.Contains(t, ui.header.GetText(false), "set save-snapshots: never to disable")
+
+	// Second scan: the directory already exists, so no announce this time.
+	ui.headerNotice = "" // expire the first announce, as its 2s timer would
+	ui.header.SetText("untouched")
+	ui.done = make(chan struct{})
+	ui.Analyzer.ResetProgress() // as the real rescan path does before re-analyzing
+	assert.Nil(t, ui.AnalyzePath("test_dir", nil))
+	<-ui.done
+	for _, f := range ui.app.(*testapp.MockedApp).GetUpdateDraws() {
+		f()
+	}
+	assert.NotContains(t, ui.header.GetText(false), "saving snapshots to")
 }
 
 func TestReadAnalysis(t *testing.T) {

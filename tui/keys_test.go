@@ -353,16 +353,36 @@ func analyzedUI(t *testing.T, buff *bytes.Buffer) *UI {
 	return ui
 }
 
-func TestQuitConfirmsAfterLongScan(t *testing.T) {
+// recordingUI returns a UI whose scan was recorded as a snapshot (save enabled,
+// auto-compaction left off so the quit path stays free of a compaction modal).
+func recordingUI(t *testing.T, buff *bytes.Buffer) *UI {
+	t.Helper()
+	simScreen := testapp.CreateSimScreen()
+	t.Cleanup(simScreen.Fini)
+	app := testapp.CreateMockedApp(false)
+	ui := CreateUI(app, simScreen, buff, true, true, false, false)
+	ui.SetSaveSnapshot(t.TempDir(), 0) // recording on: the scan saves a snapshot
+	ui.done = make(chan struct{})
+	assert.Nil(t, ui.AnalyzePath("test_dir", nil))
+	<-ui.done
+	for _, f := range ui.app.(*testapp.MockedApp).GetUpdateDraws() {
+		f()
+	}
+	return ui
+}
+
+// A completed scan whose results were never saved and that took a
+// noticeable while raises the quit confirmation.
+func TestQuitConfirmsAfterLongUnsavedScan(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
-	ui := analyzedUI(t, &bytes.Buffer{})
-	ui.scanDuration = 10 * time.Second // simulate a long scan
+	ui := analyzedUI(t, &bytes.Buffer{}) // save disabled -> results unsaved
+	ui.unsavedScanDuration = 10 * time.Second
 
 	key := ui.keyPressed(tcell.NewEventKey(tcell.KeyRune, 'q', 0))
 	assert.Nil(t, key)
-	assert.True(t, ui.pages.HasPage("confirm"))
+	assert.True(t, ui.pages.HasPage(scanQuitPage))
 }
 
 func TestQuitImmediateAfterShortScan(t *testing.T) {
@@ -370,11 +390,52 @@ func TestQuitImmediateAfterShortScan(t *testing.T) {
 	defer fin()
 
 	ui := analyzedUI(t, &bytes.Buffer{})
-	ui.scanDuration = time.Second // below the confirmation threshold
+	ui.unsavedScanDuration = time.Second // below the confirmation threshold
 
 	key := ui.keyPressed(tcell.NewEventKey(tcell.KeyRune, 'q', 0))
 	assert.Nil(t, key)
-	assert.False(t, ui.pages.HasPage("confirm"))
+	assert.False(t, ui.pages.HasPage(scanQuitPage))
+}
+
+// A recorded scan leaves unsavedScanDuration untouched, so quitting
+// is silent even though the scan completed.
+func TestQuitSilentAfterRecordedScan(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	ui := recordingUI(t, &bytes.Buffer{})
+	assert.Zero(t, ui.unsavedScanDuration) // the save means nothing is unsaved
+
+	key := ui.keyPressed(tcell.NewEventKey(tcell.KeyRune, 'q', 0))
+	assert.Nil(t, key)
+	assert.False(t, ui.pages.HasPage(scanQuitPage))
+}
+
+// A transient refresh saves no snapshot, so its completion counts as
+// unsaved (bumps the duration) and a long one confirms on quit.
+func TestTransientScanCountsAsUnsaved(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	simScreen := testapp.CreateSimScreen()
+	t.Cleanup(simScreen.Fini)
+	app := testapp.CreateMockedApp(false)
+	ui := CreateUI(app, simScreen, &bytes.Buffer{}, true, true, false, false)
+	ui.SetSaveSnapshot(t.TempDir(), 0) // recording on, but the scan below is transient
+	ui.done = make(chan struct{})
+	assert.Nil(t, ui.analyzePath("test_dir", nil, scanOpts{transient: true}))
+	<-ui.done
+	for _, f := range ui.app.(*testapp.MockedApp).GetUpdateDraws() {
+		f()
+	}
+	// A transient scan records nothing, so its results are unsaved.
+	assert.Greater(t, ui.unsavedScanDuration, time.Duration(0))
+
+	// A long unsaved (transient) scan therefore confirms on quit.
+	ui.unsavedScanDuration = 10 * time.Second
+	key := ui.keyPressed(tcell.NewEventKey(tcell.KeyRune, 'q', 0))
+	assert.Nil(t, key)
+	assert.True(t, ui.pages.HasPage(scanQuitPage))
 }
 
 func TestQuitImmediateWhenConfirmDisabled(t *testing.T) {
@@ -383,27 +444,47 @@ func TestQuitImmediateWhenConfirmDisabled(t *testing.T) {
 
 	ui := analyzedUI(t, &bytes.Buffer{})
 	ui.SetConfirmQuit(false)
-	ui.scanDuration = 10 * time.Second
+	ui.unsavedScanDuration = 10 * time.Second
 
 	key := ui.keyPressed(tcell.NewEventKey(tcell.KeyRune, 'q', 0))
 	assert.Nil(t, key)
-	assert.False(t, ui.pages.HasPage("confirm"))
+	assert.False(t, ui.pages.HasPage(scanQuitPage))
 }
 
-func TestQuitNotRetriggeredWhileConfirmOpen(t *testing.T) {
+// --no-confirm-quit disables every quit confirmation, including the
+// mid-recording-scan one the fork adds.
+func TestNoConfirmQuitDisablesRecordingScanConfirm(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
 	ui := analyzedUI(t, &bytes.Buffer{})
-	ui.scanDuration = 10 * time.Second
+	ui.SetConfirmQuit(false)
+	ui.SetSaveSnapshot(t.TempDir(), 0)
+	ui.scanning = true // a recording scan is in flight
+	ui.scanTransient = false
+	ui.scanStart = time.Now().Add(-10 * time.Second)
+	assert.True(t, ui.scanIsRecording())
+
+	key := ui.keyPressed(tcell.NewEventKey(tcell.KeyRune, 'q', 0))
+	assert.Nil(t, key)
+	assert.False(t, ui.pages.HasPage(scanQuitPage))
+}
+
+func TestQuitNotRetriggeredWhileScanQuitOpen(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	ui := analyzedUI(t, &bytes.Buffer{})
+	ui.unsavedScanDuration = 10 * time.Second
 
 	assert.Nil(t, ui.keyPressed(tcell.NewEventKey(tcell.KeyRune, 'q', 0)))
-	assert.True(t, ui.pages.HasPage("confirm"))
+	assert.True(t, ui.pages.HasPage(scanQuitPage))
 
-	// pressing q again must not stack dialogs nor quit; the key passes through
+	// pressing q again is consumed by quitApp's guard: it must not stack a
+	// second modal nor quit.
 	key := ui.keyPressed(tcell.NewEventKey(tcell.KeyRune, 'q', 0))
-	assert.NotNil(t, key)
-	assert.True(t, ui.pages.HasPage("confirm"))
+	assert.Nil(t, key)
+	assert.True(t, ui.pages.HasPage(scanQuitPage))
 }
 
 func TestQuitConfirmsDuringLongRunningScan(t *testing.T) {
@@ -417,7 +498,7 @@ func TestQuitConfirmsDuringLongRunningScan(t *testing.T) {
 
 	key := ui.keyPressed(tcell.NewEventKey(tcell.KeyRune, 'q', 0))
 	assert.Nil(t, key)
-	assert.True(t, ui.pages.HasPage("confirm"))
+	assert.True(t, ui.pages.HasPage(scanQuitPage))
 }
 
 func TestQuitImmediateDuringShortRunningScan(t *testing.T) {
@@ -431,17 +512,35 @@ func TestQuitImmediateDuringShortRunningScan(t *testing.T) {
 
 	key := ui.keyPressed(tcell.NewEventKey(tcell.KeyRune, 'q', 0))
 	assert.Nil(t, key)
-	assert.False(t, ui.pages.HasPage("confirm"))
+	assert.False(t, ui.pages.HasPage(scanQuitPage))
 }
 
-func TestDoQuitPrintsCurrentDirPath(t *testing.T) {
+// Esc mid-scan with confirmations disabled does nothing — it must
+// never silently hard-quit.
+func TestEscMidScanDoesNothingWhenConfirmDisabled(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	ui := analyzedUI(t, &bytes.Buffer{})
+	ui.SetConfirmQuit(false)
+	ui.SetSaveSnapshot(t.TempDir(), 0)
+	ui.scanning = true // recording scan in flight; progress page is the front page
+	ui.scanTransient = false
+	ui.pages.AddPage(scanProgressPage, ui.progressFlex, true, true)
+
+	key := ui.keyPressed(tcell.NewEventKey(tcell.KeyEsc, 0, 0))
+	assert.NotNil(t, key) // Esc fell through untouched: no quit, no modal
+	assert.False(t, ui.pages.HasPage(scanQuitPage))
+}
+
+func TestFinishQuitPrintsCurrentDirPath(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
 	buff := &bytes.Buffer{}
 	ui := analyzedUI(t, buff)
 
-	ui.doQuit(true)
+	ui.finishQuit(true)
 	assert.Equal(t, "test_dir\n", buff.String())
 }
 
@@ -450,17 +549,18 @@ func TestEnterAndExitPreview(t *testing.T) {
 	defer fin()
 
 	ui := analyzedUI(t, &bytes.Buffer{})
+	ui.scanning = true // simulate the scan still in flight behind the preview
 
 	ui.enterPreview()
 	assert.True(t, ui.previewing)
 	assert.NotNil(t, ui.currentDir)
-	assert.False(t, ui.pages.HasPage("progress"))
+	assert.False(t, ui.pages.HasPage(scanProgressPage))
 
 	// Tab leaves the preview and restores the scanning progress modal
 	key := ui.keyPressed(tcell.NewEventKey(tcell.KeyTab, 0, 0))
 	assert.Nil(t, key)
 	assert.False(t, ui.previewing)
-	assert.True(t, ui.pages.HasPage("progress"))
+	assert.True(t, ui.pages.HasPage(scanProgressPage))
 }
 
 func TestTabDuringScanEntersPreview(t *testing.T) {
@@ -468,13 +568,14 @@ func TestTabDuringScanEntersPreview(t *testing.T) {
 	defer fin()
 
 	ui := analyzedUI(t, &bytes.Buffer{})
-	// simulate a scan still in progress: the progress modal is shown
-	ui.pages.AddPage("progress", ui.progressFlex, true, true)
+	// simulate a scan still in progress: scanning flag set, progress page shown
+	ui.scanning = true
+	ui.pages.AddPage(scanProgressPage, ui.progressFlex, true, true)
 
 	key := ui.keyPressed(tcell.NewEventKey(tcell.KeyTab, 0, 0))
 	assert.Nil(t, key)
 	assert.True(t, ui.previewing)
-	assert.False(t, ui.pages.HasPage("progress"))
+	assert.False(t, ui.pages.HasPage(scanProgressPage))
 }
 
 func TestPreviewIgnoresDestructiveKeys(t *testing.T) {
@@ -482,6 +583,7 @@ func TestPreviewIgnoresDestructiveKeys(t *testing.T) {
 	defer fin()
 
 	ui := analyzedUI(t, &bytes.Buffer{})
+	ui.scanning = true
 	ui.enterPreview()
 
 	// delete must not open a confirmation dialog while previewing
@@ -490,11 +592,31 @@ func TestPreviewIgnoresDestructiveKeys(t *testing.T) {
 	assert.True(t, ui.previewing)
 }
 
+// q in a preview during a recording scan raises the scan-quit modal
+// (fork divergence — upstream leaves q dead in the preview).
+func TestQuitInPreviewDuringRecordingScanShowsModal(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	ui := analyzedUI(t, &bytes.Buffer{})
+	ui.SetSaveSnapshot(t.TempDir(), 0)
+	ui.scanning = true // a recording scan is in flight behind the preview
+	ui.scanTransient = false
+	ui.scanStart = time.Now()
+	ui.enterPreview()
+	assert.True(t, ui.previewing)
+
+	key := ui.keyPressed(tcell.NewEventKey(tcell.KeyRune, 'q', 0))
+	assert.Nil(t, key)
+	assert.True(t, ui.pages.HasPage(scanQuitPage))
+}
+
 func TestPreviewNavigation(t *testing.T) {
 	fin := testdir.CreateTestDir()
 	defer fin()
 
 	ui := analyzedUI(t, &bytes.Buffer{})
+	ui.scanning = true
 	ui.enterPreview()
 	root := ui.currentDir
 	rootPath := ui.currentDirPath
@@ -512,6 +634,34 @@ func TestPreviewNavigation(t *testing.T) {
 	// at the root, going up again leaves the preview
 	ui.keyPressed(tcell.NewEventKey(tcell.KeyRune, 'h', 0))
 	assert.False(t, ui.previewing)
+}
+
+// A scan completing while the user previews clears the preview and
+// renders the final tree, leaving no stale progress page.
+func TestCompletionWhilePreviewingRendersFinal(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	simScreen := testapp.CreateSimScreen()
+	t.Cleanup(simScreen.Fini)
+	app := testapp.CreateMockedApp(false)
+	ui := CreateUI(app, simScreen, &bytes.Buffer{}, true, true, false, false)
+
+	ui.done = make(chan struct{})
+	assert.Nil(t, ui.AnalyzePath("test_dir", nil))
+	<-ui.done // analyzer finished; the completion callback is queued, not yet run
+
+	ui.enterPreview() // step into the preview while completion is still pending
+	assert.True(t, ui.previewing)
+
+	for _, f := range ui.app.(*testapp.MockedApp).GetUpdateDraws() {
+		f() // run the queued completion
+	}
+
+	assert.False(t, ui.previewing)
+	assert.Nil(t, ui.previewSavedDir)
+	assert.NotNil(t, ui.currentDir)
+	assert.False(t, ui.pages.HasPage(scanProgressPage)) // no stale progress page
 }
 
 func TestEnterPreviewNoopWithoutScan(t *testing.T) {

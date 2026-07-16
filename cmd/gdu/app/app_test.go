@@ -926,7 +926,7 @@ func TestSaveSnapshotsNonInteractiveTruthTable(t *testing.T) {
 func TestSaveSnapshotsAlwaysForcesFullAnalyzer(t *testing.T) {
 	makeUI := func(mode string) *stdout.UI {
 		a := &App{Flags: &Flags{SaveSnapshots: mode}, Istty: false, Writer: bytes.NewBufferString("")}
-		ui, err := a.createUI()
+		ui, err := a.createUI("/")
 		assert.Nil(t, err)
 		stdoutUI, ok := ui.(*stdout.UI)
 		assert.True(t, ok)

@@ -254,6 +254,15 @@ func TestResolveBaselineFileRejectsBaselineRoot(t *testing.T) {
 	assert.ErrorContains(t, err, "--baseline-root only scopes a selector")
 }
 
+func TestBaselineRootWithoutBaselineErrors(t *testing.T) {
+	_, err := runApp(t,
+		&Flags{LogFile: "/dev/null", BaselineRoot: "/tmp"},
+		[]string{}, true, testdev.DevicesInfoGetterMock{},
+	)
+
+	assert.ErrorContains(t, err, "--baseline-root is only meaningful together with --baseline")
+}
+
 func TestResolveSnapshotsDirFlagWins(t *testing.T) {
 	a := &App{Flags: &Flags{SnapshotsDir: "/explicit"}}
 	dir, err := a.resolveSnapshotsDir()

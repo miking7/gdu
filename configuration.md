@@ -20,7 +20,18 @@ Path to a logfile (default "/dev/null")
 
 #### `input-file`
 
-Import analysis from JSON file
+Import analysis from a JSON or Parquet file (format auto-detected). When a Parquet file holds several
+snapshots (e.g. a compacted archive), the most recent is loaded; the CLI `--snapshot` / `--snapshot-root`
+flags select a specific one, and `gdu snapshots <file>` prints what a file (or, with no file, the
+whole `snapshots-dir` archive) contains. `--snapshot` also works *without* `input-file`: it resolves
+against the archive for snapshots of the scanned path and loads the match. The selection flags are
+command-line only — they are not configuration-file keys.
+
+For growth-diff browsing, `--baseline <sel|file>` opens the interactive UI diffed against a past
+snapshot — a snapshot file path, or a selector (`latest`, `earliest`, a timestamp prefix) resolved
+against the archive's snapshots covering the scanned path on the same volume (`--baseline-root` pins
+one exact root and reaches across volumes) — or press `S` in the TUI to pick one from the archive.
+These are command-line only too, not configuration-file keys.
 
 #### `output-file`
 

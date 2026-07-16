@@ -63,6 +63,15 @@ func TestDeletedFlagsAreGone(t *testing.T) {
 	}
 }
 
+func TestSnapshotFlagsRegistered(t *testing.T) {
+	// --snapshots-dir moved to the persistent set; see TestSnapshotsSubcommandWiring.
+	for _, name := range []string{"no-auto-compact", "baseline-root", "snapshot", "save-snapshots"} {
+		if rootCmd.Flags().Lookup(name) == nil {
+			t.Errorf("expected flag --%s to be registered", name)
+		}
+	}
+}
+
 func TestSnapshotsSubcommandWiring(t *testing.T) {
 	if snapshotsCmd.Name() != "snapshots" || !snapshotsCmd.HasAlias("snaps") {
 		t.Fatalf("expected the snapshots command with alias snaps, got %q %v",

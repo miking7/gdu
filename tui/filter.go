@@ -17,6 +17,15 @@ func (ui *UI) rebuildFooter() {
 		ui.footer.AddItem(ui.typeFilteringInput, 0, 1, ui.typeFiltering)
 	}
 	ui.footer.AddItem(ui.footerLabel, 0, 5, false)
+	// Keep the background-work indicators pinned to the right edge across
+	// filter rebuilds, for as long as the work is running: a scan the user has
+	// stepped away from and the auto-compaction.
+	if ui.scanning {
+		ui.footer.AddItem(ui.scanningLabel, len([]rune(scanningIndicatorText)), 0, false)
+	}
+	if ui.autoCompactRunning.Load() {
+		ui.footer.AddItem(ui.compactingLabel, len([]rune(compactingIndicatorText)), 0, false)
+	}
 }
 
 func (ui *UI) hideFilterInput() {

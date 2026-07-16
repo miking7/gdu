@@ -32,6 +32,7 @@ func (a *ParallelStableOrderAnalyzer) AnalyzeDir(
 	dir := a.processDir(path)
 
 	dir.BasePath = filepath.Dir(path)
+	a.setCurrentDir(dir)
 	a.wait.Wait()
 
 	a.progressDoneChan <- struct{}{}
