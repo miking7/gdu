@@ -23,12 +23,18 @@ func (ui *UI) toggleStatusBar(show bool) {
 	ui.statusMut.Lock()
 	defer ui.statusMut.Unlock()
 
+	// Preserve the two-slot header's current height across rebuilds.
+	headerLines := ui.headerLines
+	if headerLines < 1 {
+		headerLines = 1
+	}
+
 	if show {
 		ui.status = tview.NewTextView().SetDynamicColors(true)
 		ui.status.SetTextColor(textColor)
 		ui.status.SetBackgroundColor(textBgColor)
 
-		ui.grid.SetRows(1, 1, 0, 1, 1)
+		ui.grid.SetRows(headerLines, 1, 0, 1, 1)
 		ui.grid.AddItem(ui.header, 0, 0, 1, 1, 0, 0, false).
 			AddItem(ui.currentDirLabel, 1, 0, 1, 1, 0, 0, false).
 			AddItem(ui.table, 2, 0, 1, 1, 0, 0, true).
@@ -37,7 +43,7 @@ func (ui *UI) toggleStatusBar(show bool) {
 		return
 	}
 	ui.status = nil
-	ui.grid.SetRows(1, 1, 0, 1)
+	ui.grid.SetRows(headerLines, 1, 0, 1)
 	ui.grid.AddItem(ui.header, 0, 0, 1, 1, 0, 0, false).
 		AddItem(ui.currentDirLabel, 1, 0, 1, 1, 0, 0, false).
 		AddItem(ui.table, 2, 0, 1, 1, 0, 0, true).

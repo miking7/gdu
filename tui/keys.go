@@ -1,9 +1,7 @@
 package tui
 
 import (
-	"fmt"
 	"path/filepath"
-	"time"
 
 	"github.com/dundee/gdu/v5/pkg/fs"
 	"github.com/gdamore/tcell/v2"
@@ -19,8 +17,8 @@ func (ui *UI) keyPressed(key *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 
-	if ui.pages.HasPage("file") || ui.pages.HasPage("export") {
-		return key // send event to primitive
+	if ui.pages.HasPage("file") || ui.pages.HasPage("export") || ui.pages.HasPage("snapshotpicker") {
+		return key // send event to primitive (the picker/form handles its own keys)
 	}
 	if ui.filtering || ui.typeFiltering {
 		return key
@@ -39,12 +37,22 @@ func (ui *UI) keyPressed(key *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 
-	if ui.pages.HasPage("confirm") {
+	if ui.pages.HasPage("confirm") ||
+		ui.pages.HasPage(scanQuitPage) ||
+		ui.pages.HasPage(autoCompactQuitPage) {
 		return ui.handleConfirmation(key)
 	}
 
-	if ui.pages.HasPage("progress") ||
-		ui.pages.HasPage("deleting") ||
+	// The scan progress screen is the timeline's live position, and step loads
+	// show their own loading page: while either is up, the timeline stays
+	// walkable (scan-wait time travel) and everything else stays blocked.
+	// The visibility check (front page, not HasPage) matters: a scan whose
+	// progress the user has stepped away from must not block browsing the past.
+	if front, _ := ui.pages.GetFrontPage(); front == scanProgressPage || front == loadingPage {
+		return ui.handleLoadingPageKeys(key)
+	}
+
+	if ui.pages.HasPage("deleting") ||
 		ui.pages.HasPage("emptying") {
 		return key
 	}
@@ -155,13 +163,10 @@ func (ui *UI) handleQuit(key *tcell.EventKey) *tcell.EventKey {
 
 	switch key.Rune() {
 	case 'Q':
-		ui.app.Stop()
-		ui.printMarkedPaths()
-		fmt.Fprintf(ui.output, "%s\n", ui.currentDirPath)
+		ui.quitApp(true)
 		return nil
 	case 'q':
-		ui.app.Stop()
-		ui.printMarkedPaths()
+		ui.quitApp(false)
 		return nil
 	}
 	return key
@@ -187,19 +192,7 @@ func (ui *UI) handleShell(key *tcell.EventKey) *tcell.EventKey {
 			return nil
 		}
 		if ui.noSpawnShell {
-			previousHeaderText := ui.header.GetText(false)
-
-			// show feedback to user
-			ui.header.SetText(" Shell spawning is disabled!")
-
-			go func() {
-				time.Sleep(2 * time.Second)
-				ui.app.QueueUpdateDraw(func() {
-					ui.header.Clear()
-					ui.header.SetText(previousHeaderText)
-				})
-			}()
-
+			ui.headerNoticeNow("Shell spawning is disabled!")
 			return nil
 		}
 		ui.spawnShell()
@@ -238,56 +231,37 @@ func (ui *UI) handleFiltering(key *tcell.EventKey) *tcell.EventKey {
 	return key
 }
 
-// nolint: funlen // Why: there's a lot of options to handle
+//nolint:funlen,gocyclo // Why: there's a lot of options to handle
 func (ui *UI) handleMainActions(key *tcell.EventKey) *tcell.EventKey {
+	// Esc is layered: modal/help/info dismissal is consumed earlier in
+	// keyPressed; here it first clears a set Baseline, then returns to the
+	// session's return view. Esc never scans.
+	if key.Key() == tcell.KeyEsc {
+		if ui.handleEscape() {
+			return nil
+		}
+		return key
+	}
 	switch key.Rune() {
-	case 'd':
+	case 'd', 'e':
 		if ui.isInArchive() {
 			ui.showErr("Deletion is not supported in archives", nil)
 			return nil
 		}
-		ui.handleDelete(false)
-	case 'e':
-		if ui.isInArchive() {
-			ui.showErr("Deletion is not supported in archives", nil)
-			return nil
-		}
-		ui.handleDelete(true)
+		ui.handleDelete(key.Rune() == 'e')
 	case 'v':
 		if ui.isInArchive() {
 			ui.showErr("Viewing content is not supported in archives", nil)
 			return nil
 		}
 		if ui.noViewFile {
-			previousHeaderText := ui.header.GetText(false)
-
-			ui.header.SetText(" Viewing files is disabled!")
-
-			go func() {
-				time.Sleep(2 * time.Second)
-				ui.app.QueueUpdateDraw(func() {
-					ui.header.Clear()
-					ui.header.SetText(previousHeaderText)
-				})
-			}()
-
+			ui.headerNoticeNow("Viewing files is disabled!")
 			return nil
 		}
 		ui.showFile()
 	case 'o':
 		if ui.noSpawnShell {
-			previousHeaderText := ui.header.GetText(false)
-
-			// show feedback to user
-			ui.header.SetText(" Opening items is disabled!")
-
-			go func() {
-				time.Sleep(2 * time.Second)
-				ui.app.QueueUpdateDraw(func() {
-					ui.header.Clear()
-					ui.header.SetText(previousHeaderText)
-				})
-			}()
+			ui.headerNoticeNow("Opening items is disabled!")
 			return nil
 		}
 		ui.openItem()
@@ -317,6 +291,56 @@ func (ui *UI) handleMainActions(key *tcell.EventKey) *tcell.EventKey {
 		return nil
 	case 'I':
 		ui.ignoreItem()
+	case 'S':
+		ui.showSnapshotPicker()
+		return nil
+	case 'O':
+		ui.showOpenPicker()
+		return nil
+	case '[', ']':
+		ui.handleStepKey(key.Rune())
+		return nil
+	case '>':
+		if ui.inDiffMode() {
+			ui.setDiffSort(false)
+			return nil
+		}
+	case '<':
+		if ui.inDiffMode() {
+			ui.setDiffSort(true)
+			return nil
+		}
+	}
+	return key
+}
+
+// handleStepKey maps the timeline keys to steps: `[` older, `]` newer.
+func (ui *UI) handleStepKey(r rune) {
+	if r == '[' {
+		ui.handleStep(-1)
+	} else {
+		ui.handleStep(1)
+	}
+}
+
+// handleLoadingPageKeys keeps the timeline walkable while the scan progress
+// screen or a step-load page is what the user sees; every other key
+// passes through to the page.
+func (ui *UI) handleLoadingPageKeys(key *tcell.EventKey) *tcell.EventKey {
+	if (key.Rune() == '[' || key.Rune() == ']') && (ui.scanning || ui.timelineActive) {
+		ui.handleStepKey(key.Rune())
+		return nil
+	}
+	// On the scan's progress screen Esc backs out of a recording scan, raising
+	// the same quit-without-saving confirmation as 'q'. This is the layered
+	// Esc promise at the live position: the layer to peel here is the
+	// in-flight scan. Guarded on scanIsRecording, not merely ui.scanning, so Esc
+	// never hard-quits a transient refresh (which 'q' would) — Esc must not cause
+	// an unconfirmed exit. (Stepped into the past mid-scan, the front page is a
+	// snapshot View, not this one, so that Esc still returns to live progress.)
+	if key.Key() == tcell.KeyEsc && ui.scanIsRecording() {
+		ui.quitApp(false)
+		return nil
 	}
 	return key
 }
@@ -354,10 +378,14 @@ func (ui *UI) handleSorting(key *tcell.EventKey) {
 
 func (ui *UI) handleLeft() {
 	if ui.currentDirPath == ui.topDirPath {
+		// A snapshot View is all one thing: no device list, no parent scan.
+		// O jumps roots; Esc returns.
+		if !ui.viewIsLive() || ui.scanning {
+			return
+		}
 		if ui.devices != nil {
 			ui.currentDir = nil
-			err := ui.ListDevices(ui.getter)
-			if err != nil {
+			if err := ui.ListDevices(ui.getter); err != nil {
 				ui.showErr("Error listing devices", err)
 			}
 		} else if ui.browseParentDirs {
@@ -371,7 +399,7 @@ func (ui *UI) handleLeft() {
 }
 
 func (ui *UI) analyzeParentOfTopDir() {
-	if ui.currentDir == nil || ui.isInArchive() {
+	if ui.currentDir == nil || ui.isInArchive() || !ui.viewIsLive() || ui.scanning {
 		return
 	}
 
@@ -404,6 +432,16 @@ func (ui *UI) handleRight() {
 
 func (ui *UI) handleDelete(shouldEmpty bool) {
 	if ui.currentDir == nil {
+		return
+	}
+	// Mutations require a live View and no scan mutating the
+	// tree underneath. Guarded here — at the mutation's entry, not only
+	// in the key dispatch — so no future trigger path can bypass it.
+	if ui.blockMutation(false) {
+		return
+	}
+	if ui.scanning {
+		ui.showScanRunningNotice()
 		return
 	}
 	// do not allow deleting parent dir

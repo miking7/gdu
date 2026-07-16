@@ -36,6 +36,11 @@ var rootCmd = &cobra.Command{
 
 Gdu is intended primarily for SSD disks where it can fully utilize parallel processing.
 However HDDs work as well, but the performance gain is not so huge.
+
+This fork records history: every completed interactive scan is archived as a Parquet
+snapshot (see --save-snapshots). In the TUI, S compares the view against a snapshot
+(growth diff), [ and ] step the view itself through this folder's snapshots, and O opens
+any archived snapshot; snapshot views are read-only, with a guided way back to the live disk.
 `,
 	Args:         cobra.MaximumNArgs(1),
 	SilenceUsage: true,
@@ -123,6 +128,12 @@ func init() {
 	flags.StringVar(&af.SnapshotRoot, "snapshot-root", "",
 		"Restrict --snapshot selection to this exact scan root (rarely needed; the "+
 			"positional path is the primary scope without -f).")
+	flags.StringVar(&af.Baseline, "baseline", "",
+		"Interactive: open in growth-diff mode against this baseline — a Parquet snapshot "+
+			"file, or a selector (latest, earliest, or a timestamp prefix) resolved against the "+
+			"archive's snapshots covering the scanned path on the same volume. Pick another baseline in the TUI with S.")
+	flags.StringVar(&af.BaselineRoot, "baseline-root", "",
+		"Restrict a --baseline selector to snapshots of this exact scan root (also reaches across volumes).")
 	flags.BoolVar(&af.NoAutoCompact, "no-auto-compact", false,
 		"Do not compact the archive's closed months after a snapshot is saved.")
 	flags.BoolVar(&af.SequentialScanning, "sequential", false, "Use sequential scanning (intended for rotating HDDs)")

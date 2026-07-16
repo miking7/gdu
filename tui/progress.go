@@ -17,6 +17,10 @@ func (ui *UI) updateProgress(analyzer common.Analyzer, doneChan common.SignalGro
 
 	deviceSize := ui.currentDeviceSize
 	showBar := ui.showDiskProgressBar
+	// Pin the progress widget this ticker writes to: while the scan runs the
+	// user may open pickers or step through snapshots, which build their own
+	// loading pages — this ticker must never write into those.
+	progressView := ui.progress
 
 	start := time.Now()
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -30,8 +34,8 @@ func (ui *UI) updateProgress(analyzer common.Analyzer, doneChan common.SignalGro
 				ui.currentDeviceSize = 0
 			}
 			ui.app.QueueUpdateDraw(func() {
-				ui.progress.SetTitle(" Finalizing... ")
-				ui.progress.SetText("Calculating disk usage...")
+				progressView.SetTitle(" Finalizing... ")
+				progressView.SetText("Calculating disk usage...")
 			})
 			return
 		case <-ticker.C:
@@ -51,7 +55,7 @@ func (ui *UI) updateProgress(analyzer common.Analyzer, doneChan common.SignalGro
 			}
 
 			ui.app.QueueUpdateDraw(func() {
-				ui.progress.SetText("Total items: " +
+				progressView.SetText("Total items: " +
 					color +
 					common.FormatNumber(int64(itemCount)) +
 					"[white:black:-], size: " +
@@ -61,7 +65,10 @@ func (ui *UI) updateProgress(analyzer common.Analyzer, doneChan common.SignalGro
 					color +
 					delta.String() +
 					"[white:black:-]\nCurrent item: [white:black:b]" +
-					path.ShortenPath(currentItem, ui.currentItemNameMaxLen))
+					path.ShortenPath(currentItem, ui.currentItemNameMaxLen) +
+					// The scan-wait time-travel nudge, set asynchronously
+					// once covering history is found; empty otherwise.
+					ui.scanNudge)
 			})
 		}(progress.ItemCount, progress.TotalUsage, progress.CurrentItemName)
 	}

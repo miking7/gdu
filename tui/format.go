@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	blackOnWhite = "[black:white:-]"
-	whiteOnBlack = "[white:black:-]"
+	blackOnWhite     = "[black:white:-]"
+	blackOnWhiteBold = "[black:white:b]"
+	whiteOnBlack     = "[white:black:-]"
 
 	defaultColor     = "[-::]"
 	defaultColorBold = "[::b]"

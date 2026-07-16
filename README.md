@@ -307,6 +307,56 @@ gdu -f monthly.parquet --snapshot earliest              # oldest snapshot in the
 gdu -f monthly.parquet --snapshot 2026-06-19 --snapshot-root /home   # disambiguate by root
 ```
 
+### Growth-diff browsing
+
+The main reason to keep snapshots is to see **what changed**. Set a past snapshot as a *baseline*
+and gdu annotates every row with how much it grew or shrank since then, so you can sort by growth and
+drill straight to what's eating the disk.
+
+Press `S` while browsing to pick a baseline from the archive. The picker is contextual to the folder
+you're in — it shows that folder's size in each snapshot, its change since, and the snapshot's scan
+root — so you can spot when a directory ballooned and anchor the baseline there. Only snapshots whose
+scan covers the current folder **on the same volume** are listed: a whole-disk `/` scan won't clutter
+the list for a folder that lives on a separate drive (use `S` on that drive, or `--baseline-root`, to
+reach across volumes). The host column appears only for snapshots taken on another machine.
+
+Once a baseline is set, each row gains a signed **Δ column**: grown (`▲`, warm), shrank (`▼`, cool),
+new (`✦`), or absent-from-a-thresholded-baseline (`~`, approximate). Items that existed then but are
+**gone now** appear inline (`✗`, struck through). The view auto-sorts by growth; `>` / `<` flip
+between biggest growth and biggest shrink, and `Esc` clears the baseline. The footer reconciles the
+whole directory: grown, shrunk, removed, and net change.
+
+You can also start straight in diff mode from the command line. `--baseline` takes a selector
+(resolved against the archive's snapshots that **cover** the path you're browsing on the same volume —
+a baseline must cover what you're looking at; `--baseline-root` reaches across volumes) or a snapshot
+file path:
+
+```
+gdu --baseline latest /home              # live /home vs. its newest archived snapshot
+gdu --baseline 2026-06 /home             # …vs. June's snapshot (prefix must match exactly one)
+gdu --baseline 2026-06 --baseline-root / /home   # pin the selector to the whole-disk snapshots
+gdu --baseline old.parquet /home         # …vs. an explicit snapshot file
+gdu -f now.parquet --baseline old.parquet        # snapshot vs. snapshot
+```
+
+An ambiguous selector lists the candidates and suggests `--baseline-root`. When a `--baseline` file
+holds several snapshots, the latest is used. Growth is measured by disk usage; a directory's
+apparent-size growth isn't tracked because snapshots store no recursive apparent size.
+
+### Time travel
+
+Snapshots aren't just baselines — they can be **the view**. Press `[` while browsing and you're
+looking at the same folder, same cursor, as of your previous snapshot — read-only; `[` again goes
+older, `]` newer, and the footer shows the folder's size at each stop (ride it backwards to see
+*when* something ballooned). `]` past the newest returns to the live view — instantly when the live
+tree is in memory, otherwise gdu offers to rescan (your choice). `O` opens *any* archived snapshot,
+any root, any date. `Esc` always returns to where you started, instantly.
+
+Snapshot views — including `-f` imports — are **read-only**: `d`/`e`/`r` show a signpost whose
+primary action is *go live here* (an instant switch, or a confirmed scan of just that folder,
+cursor kept). Refreshes and those spot-rescans never save snapshots; only completed scans of a
+deliberately chosen root are recorded. See [FORK.md](./FORK.md) for the full journeys.
+
 ### Compacting the archive
 
 Daily snapshots add up. `gdu snapshots compact` merges every **closed** month's snapshot files (per

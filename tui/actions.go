@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -17,12 +18,14 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/dundee/gdu/v5/build"
 	"github.com/dundee/gdu/v5/internal/common"
 	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
 	"github.com/dundee/gdu/v5/pkg/fs"
+	"github.com/dundee/gdu/v5/pkg/parquet"
 	"github.com/dundee/gdu/v5/report"
 )
 
@@ -51,8 +54,29 @@ func (ui *UI) ListDevices(getter device.DevicesInfoGetter) error {
 	return nil
 }
 
+// scanOpts modifies how a scan integrates with the view and recording model.
+type scanOpts struct {
+	// transient scans — `r` refreshes and go-live spot-rescans — never save a
+	// snapshot: a snapshot records the completed scan of a deliberately
+	// chosen root.
+	transient bool
+	// keepSelection re-selects this item by name once the scanned tree is
+	// shown (the go-live flow keeps the cursor).
+	keepSelection string
+}
+
 // AnalyzePath analyzes recursively disk usage for given path
 func (ui *UI) AnalyzePath(path string, parentDir fs.Item) error {
+	return ui.analyzePath(path, parentDir, scanOpts{})
+}
+
+// analyzePath runs a scan asynchronously behind the progress page. While it
+// runs the timeline stays walkable (scan-wait time travel): the progress
+// page is the timeline's live position, and completion never steals focus from
+// a user who has stepped into the past.
+//
+//nolint:funlen // Why: one cohesive scan setup + completion sequence
+func (ui *UI) analyzePath(path string, parentDir fs.Item, opts scanOpts) error {
 	ui.progress = tview.NewTextView().SetText("Scanning...")
 	ui.progress.SetBorder(true).SetBorderPadding(2, 2, 2, 2)
 	ui.progress.SetTitle(" Scanning... ")
@@ -60,7 +84,7 @@ func (ui *UI) AnalyzePath(path string, parentDir fs.Item) error {
 
 	innerFlex := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(nil, 0, 1, false).
-		AddItem(ui.progress, 8, 1, false)
+		AddItem(ui.progress, 10, 1, false)
 
 	if ui.currentDeviceSize > 0 && ui.showDiskProgressBar {
 		ui.progressBar = NewProgressBar()
@@ -79,6 +103,20 @@ func (ui *UI) AnalyzePath(path string, parentDir fs.Item) error {
 
 	ui.pages.AddPage("progress", flex, true, true)
 
+	ui.scanning = true
+	ui.scanningRoot = path
+	ui.scanTransient = opts.transient
+	ui.scanPageHidden = false
+	ui.scanNudge = ""
+	ui.rebuildFooter() // show the right-edge "scanning…" indicator
+	if parentDir == nil {
+		ui.refreshScanNudge(path)
+	}
+
+	// The stats pass must not read ui.topDir from the scan goroutine — the
+	// user may step through snapshots (rewriting it) while the scan runs.
+	statsTree := ui.topDir
+
 	analyzer := ui.Analyzer
 	doneChan := analyzer.GetDone()
 	go ui.updateProgress(analyzer, doneChan)
@@ -93,20 +131,51 @@ func (ui *UI) AnalyzePath(path string, parentDir fs.Item) error {
 			parentDir.RemoveFileByName(currentDir.GetName())
 			parentDir.AddFile(currentDir)
 		} else {
-			ui.topDirPath = path
-			ui.topDir = currentDir
+			statsTree = currentDir
 		}
 
 		if ui.IsFilteringFiles() {
-			ui.topDir.UpdateStatsWithFileFiltering(ui.linkedItems)
+			statsTree.UpdateStatsWithFileFiltering(ui.linkedItems)
 		} else {
-			ui.topDir.UpdateStats(ui.linkedItems)
+			statsTree.UpdateStats(ui.linkedItems)
 		}
 
+		// Persist a snapshot of the just-completed scan of a chosen root.
+		// This is a background side effect and never alters the UI. Transient
+		// scans (refreshes, spot-rescans) never save.
+		var savedKey parquet.SnapshotKey
+		savedOK := false
+		if parentDir == nil && ui.SaveSnapshotEnabled && !opts.transient {
+			// Collect the scan's transient garbage first so the snapshot write
+			// reuses freed heap instead of raising peak RSS (which macOS keeps
+			// resident); otherwise --save-snapshots inflates memory while browsing.
+			runtime.GC()
+			savedKey, savedOK = ui.saveSnapshot(currentDir)
+			// Unless --no-auto-compact, tidy the archive in the background while the
+			// user browses (runs on its own goroutine; never blocks this one).
+			ui.startAutoCompact()
+		}
+
+		scannedAt := time.Now()
 		ui.app.QueueUpdateDraw(func() {
-			ui.currentDir = currentDir
-			ui.showDir()
-			ui.pages.RemovePage("progress")
+			ui.scanning = false
+			ui.scanNudge = ""
+			ui.rebuildFooter() // drop the "scanning…" indicator
+
+			if parentDir != nil {
+				// A subdir refresh grafted into the live tree: re-render in
+				// place — unless the user stepped into the past meanwhile, in
+				// which case their snapshot View must not be overwritten (the
+				// graft already updated the live tree they will return to).
+				if !ui.scanPageHidden {
+					ui.currentDir = currentDir
+					ui.showDir()
+				}
+				ui.pages.RemovePage("progress")
+				return
+			}
+
+			ui.finishRootScan(currentDir, path, scannedAt, savedKey, savedOK, opts)
 		})
 
 		if ui.done != nil {
@@ -117,8 +186,186 @@ func (ui *UI) AnalyzePath(path string, parentDir fs.Item) error {
 	return nil
 }
 
-// ReadAnalysis reads analysis report from JSON file
+// finishRootScan integrates a completed root scan into the view model: the
+// fresh tree becomes the live view (and the fold identity for the timeline).
+// When the user is watching the progress screen the view switches to the
+// result; when they have stepped into the past, completion never steals focus
+// — the footer flashes instead and `]` leads to the new tree.
+func (ui *UI) finishRootScan(
+	tree fs.Item, path string, scannedAt time.Time,
+	savedKey parquet.SnapshotKey, savedOK bool, opts scanOpts,
+) {
+	newView := &view{tree: tree, topPath: path, scannedAt: scannedAt}
+	ui.liveSavedKey = savedKey
+	ui.liveSavedValid = savedOK
+	ui.liveDiverged.Store(false)
+
+	switch {
+	case ui.returnView == nil:
+		// The session's first view: where Esc always returns.
+		ui.returnView = newView
+	case ui.returnView.isLive() && (!opts.transient || path == ui.returnView.topPath):
+		// A live-started session's return target follows deliberate re-roots
+		// (device/parent/end-of-timeline scans) and same-root refreshes; a
+		// spot-rescan of an uncovered folder leaves it alone.
+		ui.returnView = newView
+	}
+
+	// The user is "watching" unless they stepped away from the progress page
+	// into the past. The explicit flag — not a front-page check — so a
+	// modal stacked over the progress page (the quit confirmation) doesn't
+	// masquerade as stepping away and swallow the finished tree.
+	watching := !ui.scanPageHidden
+	ui.pages.RemovePage("progress")
+	ui.liveView = newView
+	// Any pinned timeline predates this scan: its fold decision and positions
+	// are stale now that the live position is a fresh tree. The next step
+	// re-derives (and re-finds the shown snapshot by identity).
+	ui.resetTimeline()
+
+	if !watching {
+		ui.flashFooter(scanCompleteNotice)
+		return
+	}
+
+	targetPath := path
+	if ui.currentDir != nil && report.PathCoveredBy(path, ui.currentDirPath) {
+		targetPath = ui.currentDirPath
+	}
+	ui.applyView(newView, targetPath, opts.keepSelection)
+	ui.refreshCoveringHint(path)
+}
+
+// refreshScanNudge asynchronously adds the scan-wait time-travel hint to the
+// progress screen when covering history exists.
+func (ui *UI) refreshScanNudge(path string) {
+	if ui.snapshotsDir == "" {
+		return
+	}
+	devices, getter := ui.devices, ui.getter // captured on the loop for off-loop mount resolution
+	ui.goPickerWork(func() {
+		covering, err := ui.coveringForTarget(path, devices, getter)
+		if err != nil || len(covering) == 0 {
+			return
+		}
+		age := humanAge(time.Since(covering[0].ScanTs)) // newest first
+		ui.app.QueueUpdateDraw(func() {
+			if !ui.scanning {
+				return // the scan finished before the archive listing did
+			}
+			ui.scanNudge = fmt.Sprintf(
+				"\n\nWaiting? [ steps into your last snapshot of this folder (%s ago) — ] returns here.", age)
+		})
+	})
+}
+
+// saveSnapshot writes tree to the archive and returns the saved snapshot's
+// identity for the timeline fold rule.
+func (ui *UI) saveSnapshot(tree fs.Item) (key parquet.SnapshotKey, ok bool) {
+	path, key, createdDir, err := parquet.SaveSnapshot(tree, ui.SnapshotsDir, ui.SnapshotThreshold, time.Now())
+	if createdDir {
+		// This save created the archive: tell the user where recording is
+		// landing. Announced even if the write itself then failed — the
+		// directory now exists, so no later save would ever announce, and
+		// recording must not start silently.
+		announcement := common.SnapshotDirAnnouncement(ui.SnapshotsDir)
+		log.Print(announcement)
+		ui.showHeaderNotice(announcement)
+	}
+	if err != nil {
+		log.Printf("save-snapshots failed: %s", err)
+		return key, false
+	}
+	log.Printf("Saved snapshot to %s", path)
+	return key, true
+}
+
+// showHeaderNotice flashes text in the header for 2 seconds, then re-renders
+// the state-driven header. Safe to call from any goroutine EXCEPT the event
+// loop — tview's QueueUpdateDraw deadlocks when called from the loop it
+// queues onto; event-loop callers use headerNoticeNow.
+func (ui *UI) showHeaderNotice(text string) {
+	ui.app.QueueUpdateDraw(func() {
+		ui.headerNoticeNow(text)
+	})
+}
+
+// headerNoticeNow flashes text in the header for 2 seconds, then re-renders
+// the state-driven header. While a notice shows, updateHeader holds off so a
+// view change underneath doesn't clobber it; a newer notice wins. Must run on
+// the event loop.
+func (ui *UI) headerNoticeNow(text string) {
+	noticeText := " " + text
+	ui.headerNotice = noticeText
+	ui.header.SetText(noticeText)
+
+	go func() {
+		time.Sleep(2 * time.Second)
+		ui.app.QueueUpdateDraw(func() {
+			if ui.headerNotice != noticeText {
+				return // a newer notice owns the header
+			}
+			ui.headerNotice = ""
+			ui.updateHeader()
+		})
+	}()
+}
+
+// ReadAnalysis reads an analysis report (JSON or Parquet) into a read-only
+// import View (hard read-only applies to `-f` startup Views too).
 func (ui *UI) ReadAnalysis(input io.Reader) error {
+	sel := parquet.SnapshotSelector{
+		Spec: ui.SnapshotSpec, Root: ui.SnapshotRoot,
+		ExactTs: ui.SnapshotTs, ExactHost: ui.SnapshotHost,
+	}
+
+	// A seekable Parquet file carries snapshot identities: resolve which
+	// snapshot the View will show up front, so the header can say when it was
+	// taken. A multi-snapshot file opened without an explicit --snapshot opens
+	// the picker instead. stdin and JSON fall through to an identity-less load.
+	if f, ok := input.(*os.File); ok {
+		if snapshots, serr := report.ParquetSnapshotsFromFile(f); serr == nil && len(snapshots) > 0 {
+			if len(snapshots) > 1 && sel.Spec == "" && sel.Root == "" && sel.ExactTs.IsZero() {
+				ui.showStartupSnapshotPicker(f, snapshots)
+				return nil
+			}
+			if info, ierr := parquet.SelectSnapshot(snapshots, sel); ierr == nil {
+				ui.loadSnapshotFromFile(f, &info)
+				return nil
+			}
+			// An unresolvable selector falls through; the reader below fails
+			// with the same descriptive error, shown in the error modal.
+		}
+	}
+
+	ui.loadAnalysis(func() (*analyze.Dir, error) {
+		return report.ReadAnalysisWithSnapshot(input, sel)
+	}, nil, importName(input))
+	return nil
+}
+
+// loadSnapshotFromFile loads one identified snapshot from an open Parquet file
+// into a snapshot View.
+func (ui *UI) loadSnapshotFromFile(f *os.File, info *parquet.SnapshotInfo) {
+	snapshot := *info // own copy; the async load outlives the caller's value
+	ui.loadAnalysis(func() (*analyze.Dir, error) {
+		return report.ReadAnalysisSnapshot(f, &snapshot)
+	}, &snapshot, "")
+}
+
+// importName names an identity-less import for the header's Viewing line.
+func importName(input io.Reader) string {
+	if f, ok := input.(*os.File); ok && f.Name() != "" && f.Name() != os.Stdin.Name() {
+		return filepath.Base(f.Name())
+	}
+	return "(stdin)"
+}
+
+// loadAnalysis shows the reading-progress page and, on a background goroutine,
+// runs load to build the tree, then renders it as a read-only View (or shows
+// an error). snapshot identifies the View when known; importLabel names an
+// identity-less one. Shared by the `-f` paths and the startup picker.
+func (ui *UI) loadAnalysis(load func() (*analyze.Dir, error), snapshot *parquet.SnapshotInfo, importLabel string) {
 	ui.progress = tview.NewTextView().SetText("Reading analysis from file...")
 	ui.progress.SetBorder(true).SetBorderPadding(2, 2, 2, 2)
 	ui.progress.SetTitle(" Reading... ")
@@ -135,8 +382,7 @@ func (ui *UI) ReadAnalysis(input io.Reader) error {
 	ui.pages.AddPage("progress", flex, true, true)
 
 	go func() {
-		var err error
-		ui.currentDir, err = report.ReadAnalysis(input)
+		dir, err := load()
 		if err != nil {
 			ui.app.QueueUpdateDraw(func() {
 				ui.pages.RemovePage("progress")
@@ -147,16 +393,19 @@ func (ui *UI) ReadAnalysis(input io.Reader) error {
 			}
 			return
 		}
-		runtime.GC()
-
-		ui.topDirPath = ui.currentDir.GetPath()
-		ui.topDir = ui.currentDir
+		// The Parquet/JSON reader churns a lot of short-lived memory; return it to
+		// the OS before the long-lived browsing session (see RAM notes in the plan).
+		debug.FreeOSMemory()
 
 		links := make(fs.HardLinkedItems, 10)
-		ui.topDir.UpdateStats(links)
+		dir.UpdateStats(links)
 
 		ui.app.QueueUpdateDraw(func() {
-			ui.showDir()
+			v := &view{tree: dir, topPath: dir.GetPath(), snapshot: snapshot, importLabel: importLabel}
+			if ui.returnView == nil {
+				ui.returnView = v // the View this session was launched into
+			}
+			ui.applyView(v, v.topPath, "")
 			ui.pages.RemovePage("progress")
 		})
 
@@ -164,11 +413,10 @@ func (ui *UI) ReadAnalysis(input io.Reader) error {
 			ui.done <- struct{}{}
 		}
 	}()
-
-	return nil
 }
 
-// ReadFromStorage reads analysis data from persistent key-value storage
+// ReadFromStorage reads analysis data from persistent key-value storage. The
+// result is a stored past scan, so it is a read-only import View like -f.
 func (ui *UI) ReadFromStorage(storagePath, path string) error {
 	storage := analyze.NewStorage(storagePath, path)
 	closeFn := storage.Open()
@@ -179,11 +427,11 @@ func (ui *UI) ReadFromStorage(storagePath, path string) error {
 		return err
 	}
 
-	ui.currentDir = dir
-	ui.topDirPath = ui.currentDir.GetPath()
-	ui.topDir = ui.currentDir
-
-	ui.showDir()
+	v := &view{tree: dir, topPath: dir.GetPath(), importLabel: filepath.Base(storagePath)}
+	if ui.returnView == nil {
+		ui.returnView = v
+	}
+	ui.applyView(v, v.topPath, "")
 	return nil
 }
 
@@ -195,9 +443,17 @@ func (ui *UI) delete(shouldEmpty bool) {
 	}
 }
 
+// markLiveDiverged records that the live tree no longer matches its saved
+// snapshot (deletes, refreshes), un-folding that snapshot on the timeline.
+// Safe from any goroutine.
+func (ui *UI) markLiveDiverged() {
+	ui.liveDiverged.Store(true)
+}
+
 func (ui *UI) deleteSelected(shouldEmpty bool) {
 	row, column := ui.table.GetSelection()
 	selectedItem := ui.table.GetCell(row, column).GetReference().(fs.Item)
+	ui.markLiveDiverged()
 
 	if ui.deleteInBackground {
 		ui.queueForDeletion([]fs.Item{selectedItem}, shouldEmpty)
@@ -274,7 +530,11 @@ func (ui *UI) showInfo() {
 
 	var content, numberColor string
 	row, column := ui.table.GetSelection()
-	selectedFile := ui.table.GetCell(row, column).GetReference().(fs.Item)
+	// Removed-item rows in diff mode carry no reference; there is no info to show.
+	selectedFile, ok := ui.table.GetCell(row, column).GetReference().(fs.Item)
+	if !ok {
+		return
+	}
 
 	if ui.UseColors {
 		numberColor = fmt.Sprintf(

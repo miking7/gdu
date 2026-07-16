@@ -17,12 +17,40 @@ import (
 	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
 	"github.com/dundee/gdu/v5/pkg/fs"
+	"github.com/dundee/gdu/v5/pkg/parquet"
 	"github.com/gdamore/tcell/v2"
 	"github.com/stretchr/testify/assert"
 )
 
 func init() {
 	log.SetLevel(log.WarnLevel)
+}
+
+// snapAt wraps a timestamp as a minimal SnapshotInfo for SetBaseline in tests
+// that only care about the baseline's time, not its full identity.
+func snapAt(ts time.Time) *parquet.SnapshotInfo {
+	return &parquet.SnapshotInfo{ScanTs: ts}
+}
+
+// screenContainsWord reports whether word appears as a contiguous run of cells in
+// the simulation screen's (row-major) buffer. Used instead of a hardcoded cell
+// offset so help-text layout changes don't break the assertion.
+func screenContainsWord(sim tcell.SimulationScreen, word string) bool {
+	cells, _, _ := sim.GetContents()
+	wb := []byte(word)
+	for i := 0; i+len(wb) <= len(cells); i++ {
+		match := true
+		for j := range wb {
+			if len(cells[i+j].Bytes) == 0 || cells[i+j].Bytes[0] != wb[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 func TestFooter(t *testing.T) {
@@ -131,14 +159,11 @@ func TestHelp(t *testing.T) {
 
 	// printScreen(simScreen)
 
-	b, _, _ := simScreen.GetContents()
-
-	cells := b[557 : 557+9]
-
-	text := []byte("directory")
-	for i, r := range cells {
-		assert.Equal(t, text[i], r.Bytes[0])
-	}
+	// Assert the help renders by locating a known shortcut description rather than
+	// a hardcoded cell offset, so adding a help line (e.g. the S baseline picker)
+	// doesn't shift the layout out from under the test.
+	assert.True(t, screenContainsWord(simScreen, "directory"),
+		"help screen should render the 'directory' shortcut description")
 }
 
 func TestHelpBw(t *testing.T) {
@@ -152,14 +177,11 @@ func TestHelpBw(t *testing.T) {
 
 	// printScreen(simScreen)
 
-	b, _, _ := simScreen.GetContents()
-
-	cells := b[557 : 557+9]
-
-	text := []byte("directory")
-	for i, r := range cells {
-		assert.Equal(t, text[i], r.Bytes[0])
-	}
+	// Assert the help renders by locating a known shortcut description rather than
+	// a hardcoded cell offset, so adding a help line (e.g. the S baseline picker)
+	// doesn't shift the layout out from under the test.
+	assert.True(t, screenContainsWord(simScreen, "directory"),
+		"help screen should render the 'directory' shortcut description")
 }
 
 func TestAppRun(t *testing.T) {

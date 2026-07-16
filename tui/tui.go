@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -16,8 +18,10 @@ import (
 	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
 	"github.com/dundee/gdu/v5/pkg/fs"
+	"github.com/dundee/gdu/v5/pkg/parquet"
 	"github.com/dundee/gdu/v5/pkg/remove"
 	"github.com/dundee/gdu/v5/pkg/timefilter"
+	"github.com/dundee/gdu/v5/report"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -98,6 +102,72 @@ type UI struct {
 	browseParentDirs        bool
 	showDiskProgressBar     bool
 	currentDeviceSize       int64
+	// growth-diff browsing: a session-only baseline snapshot the
+	// current tree is diffed against. nil means normal browsing.
+	baseline   *analyze.Baseline
+	baselineTs time.Time
+	// baselineKey is the active baseline snapshot's full identity, so the
+	// S picker can mark and pre-select it on reopen — a timestamp alone can't
+	// tell same-instant snapshots of different roots apart. Zero when no
+	// snapshot-derived baseline is set.
+	baselineKey  parquet.SnapshotKey
+	diffReverse  bool
+	snapshotsDir string // archive dir the S/O pickers list snapshots from
+	// View/Baseline state: every screen shows a View, optionally against a
+	// Baseline. currentView is what's shown, liveView the in-memory live tree
+	// (kept while snapshot Views are shown), returnView where Esc lands — the
+	// View the session was launched into.
+	currentView *view
+	liveView    *view
+	returnView  *view
+	// liveSavedKey identifies the snapshot saved from liveView's scan, for the
+	// timeline fold rule; liveDiverged flips once the live tree mutates
+	// (deletes, refreshes), un-folding the saved snapshot. liveDiverged is
+	// atomic because delete workers set it off the event loop.
+	liveSavedKey   parquet.SnapshotKey
+	liveSavedValid bool
+	liveDiverged   atomic.Bool
+	// time stepping: the pinned timeline of covering snapshots (oldest →
+	// newest; position len == live), the walk's target position, and a
+	// generation counter invalidating superseded async loads.
+	timelineEntries []report.SnapshotListing
+	timelineRoot    string
+	timelinePos     int
+	timelineActive  bool
+	timelineFolded  bool // the pin dropped the just-saved snapshot
+	stepTarget      int
+	stepLoading     bool
+	stepGen         uint64
+	// scan-wait state: scanning is true while a chosen scan runs (event
+	// loop only), scanningRoot its root, scanNudge the progress screen's
+	// time-travel hint line, scanningLabel the right-edge footer indicator.
+	scanning       bool
+	scanningRoot   string
+	scanTransient  bool // the running scan is transient (would not save a snapshot)
+	scanPageHidden bool // the user stepped away from the scan's progress page
+	scanNudge      string
+	scanningLabel  *tview.TextView
+	coveringHint   bool   // archive holds covering history → context-aware header hint
+	headerLines    int    // current header grid-row height (1 or 2)
+	headerNotice   string // transient header notice; suppresses updateHeader while set
+	footerBase     string // the footer's resting text; flashes restore it
+	// snapshot picker: sizes fill in asynchronously behind the shown list, and the
+	// selected baseline loads on its own goroutine. snapshotPickerGen invalidates
+	// stale async cell updates (touched only on the event loop); snapshotSizeCancel
+	// stops the background size-reader when the picker closes; snapshotWork tracks
+	// in-flight fill/load goroutines so a quit can drain them before Stop; and
+	// snapshotShuttingDown (event-loop only) stops new ones racing that drain.
+	snapshotPickerGen    uint64
+	snapshotSizeCancel   context.CancelFunc
+	snapshotWork         sync.WaitGroup
+	snapshotWorkActive   atomic.Int32 // >0 while a fill/load goroutine runs (cheap quit check)
+	snapshotShuttingDown bool
+	// background auto-compaction run state (see tui/autocompact.go)
+	autoCompactCancel  context.CancelFunc
+	autoCompactDone    chan struct{}
+	autoCompactRunning atomic.Bool
+	compactingLabel    *tview.TextView
+	quitOnce           sync.Once
 }
 
 type deleteQueueItem struct {
@@ -173,9 +243,13 @@ func CreateUI(
 	ui.app.SetMouseCapture(ui.onMouse)
 
 	ui.header = tview.NewTextView()
-	ui.header.SetText(" gdu ~ Use arrow keys to navigate, press ? for help ")
 	ui.header.SetTextColor(tcell.GetColor(ui.headerTextColor))
 	ui.header.SetBackgroundColor(tcell.GetColor(ui.headerBackgroundColor))
+	// Set the initial header text. This shows the normal navigation hint, or the
+	// baseline banner when a --baseline option (applied above, before this widget
+	// existed) has already put the UI in diff mode.
+	ui.headerLines = 1
+	ui.updateHeader()
 
 	ui.currentDirLabel = tview.NewTextView()
 	ui.currentDirLabel.SetTextColor(tcell.ColorDefault)
@@ -202,6 +276,18 @@ func CreateUI(
 
 	ui.footer = tview.NewFlex()
 	ui.footer.AddItem(ui.footerLabel, 0, 1, false)
+
+	// Right-edge indicator added/removed while auto-compaction works in the
+	// background; created up front so goroutines never race its construction.
+	ui.compactingLabel = tview.NewTextView().SetText(compactingIndicatorText)
+	ui.compactingLabel.SetTextColor(tcell.GetColor(ui.footerTextColor))
+	ui.compactingLabel.SetBackgroundColor(tcell.GetColor(ui.footerBackgroundColor))
+
+	// Right-edge indicator shown while a scan runs and the user is elsewhere on
+	// the timeline (scan-wait time travel).
+	ui.scanningLabel = tview.NewTextView().SetText(scanningIndicatorText)
+	ui.scanningLabel.SetTextColor(tcell.GetColor(ui.footerTextColor))
+	ui.scanningLabel.SetBackgroundColor(tcell.GetColor(ui.footerBackgroundColor))
 
 	ui.createGrid()
 
@@ -312,6 +398,12 @@ func (ui *UI) SetChangeCwdFn(fn func(string) error) {
 	ui.changeCwdFn = fn
 }
 
+// SetSnapshotsDir sets the snapshot archive directory the S picker lists baselines
+// from (growth-diff browsing).
+func (ui *UI) SetSnapshotsDir(dir string) {
+	ui.snapshotsDir = dir
+}
+
 // SetDeleteInParallel sets the flag to delete files in parallel
 func (ui *UI) SetDeleteInParallel() {
 	ui.remover = remove.ItemFromDirParallel
@@ -334,10 +426,7 @@ func (ui *UI) StartUILoop() error {
 		)
 		s := <-c
 		log.Printf("Got signal: %s", s)
-		ui.app.QueueUpdateDraw(func() {
-			ui.printMarkedPaths()
-			ui.app.Stop()
-		})
+		ui.handleShutdownSignal()
 	}()
 
 	return ui.app.Run()
@@ -402,10 +491,24 @@ func (ui *UI) resetSorting() {
 	ui.sortOrder = ui.defaultSortOrder
 }
 
+// rescanDir refreshes the current directory from the live disk. Refreshes are
+// transient: they never save a snapshot and mark the live tree as
+// diverged from its saved snapshot (un-folding it on the timeline).
+// Refreshing a snapshot View would graft live data into it — a View is all
+// one thing — so the go-live signpost intercepts instead; guarded here
+// at the mutation's entry so no trigger path can bypass it.
 func (ui *UI) rescanDir() {
+	if ui.blockMutation(true) {
+		return
+	}
+	if ui.scanning {
+		ui.showScanRunningNotice()
+		return
+	}
 	ui.Analyzer.ResetProgress()
 	ui.linkedItems = make(fs.HardLinkedItems)
-	err := ui.AnalyzePath(ui.currentDirPath, ui.currentDir.GetParent())
+	ui.liveDiverged.Store(true)
+	err := ui.analyzePath(ui.currentDirPath, ui.currentDir.GetParent(), scanOpts{transient: true})
 	if err != nil {
 		ui.showErr("Error rescanning path", err)
 	}
@@ -494,19 +597,7 @@ func (ui *UI) deviceItemSelected(row, column int) {
 
 func (ui *UI) confirmDeletion(shouldEmpty bool) {
 	if ui.noDelete {
-		previousHeaderText := ui.header.GetText(false)
-
-		// show feedback to user
-		ui.header.SetText(" Deletion is disabled!")
-
-		go func() {
-			time.Sleep(2 * time.Second)
-			ui.app.QueueUpdateDraw(func() {
-				ui.header.Clear()
-				ui.header.SetText(previousHeaderText)
-			})
-		}()
-
+		ui.headerNoticeNow("Deletion is disabled!")
 		return
 	}
 

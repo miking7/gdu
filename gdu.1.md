@@ -24,6 +24,12 @@ Gdu is intended primarily for SSD disks where it can fully utilize
 parallel processing. However HDDs work as well, but the performance gain
 is not so huge.
 
+This fork records history: every completed interactive scan is archived as a
+Parquet snapshot (see **\--save-snapshots**). In the TUI, **S** compares the view
+against a snapshot (growth diff), **\[** and **\]** step the view itself through
+this folder's snapshots, and **O** opens any archived snapshot; snapshot views
+are read-only, with a guided way back to the live disk.
+
 # COMMANDS
 
 **gdu snapshots \[list\] \[file.parquet\]**
@@ -135,6 +141,10 @@ non-interactive mode
 
 **\--snapshot-root** Restrict --snapshot selection to this exact scan root (rarely needed; the positional path is the primary scope without -f).
 
+**\--baseline** Interactive: open in growth-diff mode against this baseline — a Parquet snapshot file, or a selector (latest, earliest, or a timestamp prefix) resolved against the archive's snapshots covering the scanned path on the same volume. Pick another baseline in the TUI with S.
+
+**\--baseline-root** Restrict a --baseline selector to snapshots of this exact scan root (also reaches across volumes).
+
 **\--no-auto-compact**\[=false\] Do not compact the archive's closed months after a snapshot is saved.
 
 **\--owner** Make written output (snapshots, -o exports) owned by this user: resolves their home for the default snapshots-dir and chowns output to them. For scheduled root scans.
@@ -150,6 +160,39 @@ non-interactive mode
 **-r**, **\--read-from-storage**\[=false\] Use existing database instead of re-scanning
 
 **-v**, **\--version**\[=false\] Print version
+
+# HISTORY KEYS
+
+In the TUI, once the archive holds snapshots covering the current folder:
+
+**\[** / **\]**
+
+:   Step the view to an older / newer snapshot of the current folder (same
+    folder, same cursor). At the newest, **\]** returns to the live view —
+    instantly when the live tree is still in memory, otherwise via an
+    explicit rescan offer.
+
+**S**
+
+:   Pick a baseline snapshot covering this folder on its volume (the picker lists
+    each snapshot's scan root, size of this folder, and change since; a host
+    column shows only for snapshots from another machine); every row then carries
+    a signed growth delta (**\>** / **\<** sort by growth).
+
+**O**
+
+:   Open any archived snapshot — all roots and dates — as the view.
+
+**Esc**
+
+:   Layered and always instant: close an overlay, else clear the baseline,
+    else return to where the session started. Esc never scans.
+
+Snapshot views (including **-f** imports) are read-only: **d**, **e** and
+**r** offer *go live here* — an instant switch when a live tree covering the
+folder is in memory, else a confirmed scan of just that folder. Refreshes and
+those spot-rescans never save a snapshot; only completed scans of a
+deliberately chosen root are recorded.
 
 # FILE FLAGS
 
