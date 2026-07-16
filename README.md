@@ -38,27 +38,33 @@ Or you can use Gdu directly via Docker:
 
 ```
   gdu [flags] [directory_to_scan]
+  gdu snapshots [list|compact] [file]   # list or compact the snapshot archive (alias: snaps)
 
 Flags:
       --archive-browsing              Enable browsing of zip/jar/tar archives (tar, tar.gz, tar.bz2, tar.xz)
+      --baseline string               Interactive: open in growth-diff mode against this baseline — a Parquet snapshot file, or a selector (latest, earliest, or a timestamp prefix) resolved against the archive's snapshots covering the scanned path on the same volume. Pick another baseline in the TUI with S.
+      --baseline-root string          Restrict a --baseline selector to snapshots of this exact scan root (also reaches across volumes).
       --collapse-path                 Collapse single-child directory chains
-      --config-file string            Read config from file (default is $HOME/.gdu.yaml)
+      --config-file string            Read config from file (default is ~/.config/gdu/gdu.yaml, or ~/.gdu.yaml if that exists)
   -D, --db string                     Store analysis in database (*.sqlite for SQLite, *.badger for BadgerDB)
       --depth int                     Show directory structure up to specified depth in non-interactive mode (0 means the flag is ignored)
       --enable-profiling              Enable collection of profiling data and provide it on http://localhost:6060/debug/pprof/
   -E, --exclude-type strings          File types to exclude (e.g., --exclude-type yaml,json)
+      --export-threshold string       Bucket objects smaller than this size into a '<smaller objects>' rollup on export. Binary units: 10M, 500K, 2G, or plain bytes. 0 = keep everything. (default "0")
   -L, --follow-symlinks               Follow symlinks for files, i.e. show the size of the file to which symlink points to (symlinks to directories are not followed)
   -h, --help                          help for gdu
   -i, --ignore-dirs strings           Paths to ignore (separated by comma). Can be absolute or relative to current directory (default [/proc,/dev,/sys,/run])
   -I, --ignore-dirs-pattern strings   Path patterns to ignore (separated by comma)
   -X, --ignore-from string            Read path patterns to ignore from file
-  -f, --input-file string             Import analysis from JSON file
+  -f, --input-file string             Import analysis from JSON or Parquet file (format auto-detected)
       --interactive                   Force interactive mode even when output is not a TTY
+      --launcher                      Open the interactive launcher (folder, its disk, your other disks, snapshots) instead of scanning immediately. --launcher=false (or launcher: false in config) restores upstream scan-immediately behavior. Ignored in non-interactive mode. (default true)
   -l, --log-file string               Path to a logfile (default "/dev/null")
       --max-age string                Include files with mtime no older than DURATION (e.g., 7d, 2h30m, 1y2mo)
   -m, --max-cores int                 Set max cores that Gdu will use. 8 cores available (default 8)
       --min-age string                Include files with mtime at least DURATION old (e.g., 30d, 1w)
       --mouse                         Use mouse
+      --no-auto-compact               Do not compact the archive's closed months after a snapshot is saved.
   -c, --no-color                      Do not use colorized output
   -x, --no-cross                      Do not cross filesystem boundaries
       --no-delete                     Do not allow deletions
@@ -70,8 +76,11 @@ Flags:
       --no-view-file                  Do not allow viewing file contents
   -n, --non-interactive               Do not run in interactive mode
   -o, --output-file string            Export all info into file as JSON
+      --output-format string          Export format: json (default) or parquet. Inferred from the -o file extension when unset.
+      --owner string                  Make written output (snapshots, -o exports) owned by this user: resolves their home for the default snapshots-dir and chowns output to them. For scheduled root scans.
   -r, --read-from-storage             Use existing database instead of re-scanning
       --reverse-sort                  Reverse sorting order (smallest to largest) in non-interactive mode
+      --save-snapshots string         When to save each completed scan as a Parquet snapshot in the snapshots directory (auto|always|never, default auto): auto saves interactive scans only, always saves in every mode (forcing the full-tree analyzer non-interactively), never disables saving. Snapshot rollup threshold defaults to 10M. (default "auto")
       --sequential                    Use sequential scanning (intended for rotating HDDs)
   -A, --show-annexed-size             Use apparent size of git-annex'ed files in case files are not present locally (real usage is zero)
   -a, --show-apparent-size            Show apparent size
@@ -82,12 +91,15 @@ Flags:
   -B, --show-relative-size            Show relative size
       --si                            Show sizes with decimal SI prefixes (kB, MB, GB) instead of binary prefixes (KiB, MiB, GiB)
       --since string                  Include files with mtime >= WHEN. WHEN accepts RFC3339 timestamp (e.g., 2025-08-11T01:00:00-07:00) or date only YYYY-MM-DD (calendar-day compare; includes the whole day)
+      --snapshot string               Which snapshot to load: latest, earliest, or a local timestamp/prefix like 2026-06-19 or 2026-06-19T15:30:05. With -f, selects within that file; without -f, resolves against the archive for snapshots of the scanned path and loads the match.
+      --snapshot-root string          Restrict --snapshot selection to this exact scan root (rarely needed; the positional path is the primary scope without -f).
+      --snapshots-dir string          Directory for saved snapshots (default $XDG_DATA_HOME/gdu/snapshots, i.e. ~/.local/share/gdu/snapshots).
   -s, --summarize                     Show only a total in non-interactive mode
   -t, --top int                       Show only top X largest files in non-interactive mode
   -T, --type strings                  File types to include (e.g., --type yaml,json)
       --until string                  Include files with mtime <= WHEN. WHEN accepts RFC3339 timestamp or date only YYYY-MM-DD
   -v, --version                       Print version
-      --write-config                  Write current configuration to file (default is $HOME/.gdu.yaml)
+      --write-config                  Write current configuration to file (the config that would be read: an existing user config, else ~/.config/gdu/gdu.yaml, creating the directory)
 
 Basic list of actions in interactive mode (show help modal for more):
   ↑ or k                              Move cursor up

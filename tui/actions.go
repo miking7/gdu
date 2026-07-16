@@ -40,10 +40,14 @@ const (
 	actingDelete = "deleting"
 )
 
-// ListDevices lists mounted devices and shows their disk usage
+// ListDevices lists mounted devices and shows their disk usage. This is the
+// standalone device table (non-interactive `-d`, or `-d` with launcher:false);
+// the launcher is the interactive front door otherwise. Marking usingLauncher
+// false keeps left-arrow-at-top returning here, not to the launcher.
 func (ui *UI) ListDevices(getter device.DevicesInfoGetter) error {
 	var err error
 	ui.getter = getter
+	ui.usingLauncher = false
 	ui.devices, err = getter.GetDevicesInfo()
 	if err != nil {
 		return err
@@ -63,6 +67,10 @@ type scanOpts struct {
 	// keepSelection re-selects this item by name once the scanned tree is
 	// shown (the go-live flow keeps the cursor).
 	keepSelection string
+	// landPath, when the completed root scan covers it, is the folder the view
+	// lands on instead of the scan root — the launcher's pinned own-disk row
+	// scans the whole disk but shows the default dir.
+	landPath string
 }
 
 // AnalyzePath analyzes recursively disk usage for given path
@@ -229,7 +237,12 @@ func (ui *UI) finishRootScan(
 	}
 
 	targetPath := path
-	if ui.currentDir != nil && report.PathCoveredBy(path, ui.currentDirPath) {
+	switch {
+	case opts.landPath != "" && report.PathCoveredBy(path, opts.landPath):
+		// The launcher's pinned own-disk row scans the whole disk but lands on
+		// the default dir — takes precedence over the current-folder rule.
+		targetPath = opts.landPath
+	case ui.currentDir != nil && report.PathCoveredBy(path, ui.currentDirPath):
 		targetPath = ui.currentDirPath
 	}
 	ui.applyView(newView, targetPath, opts.keepSelection)

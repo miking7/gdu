@@ -46,6 +46,27 @@ func (f ByName) Less(i, j int) bool {
 	return f[i].Name < f[j].Name
 }
 
+// systemVolumePrefix is the macOS mount-point prefix under which the OS exposes
+// its synthetic system volumes (Preboot, Update, VM, Data, xarts, …) — noise a
+// user browsing disk usage never wants to pick.
+const systemVolumePrefix = "/System/Volumes/"
+
+// HideSystemVolumes returns devices with macOS system volumes (mounted under
+// /System/Volumes/) removed. It is a **display-only** filter for the launcher —
+// never use it for nested-mount ignore computation, which needs the full list
+// (a filtered list would let a "/" scan descend into /System/Volumes/Data and
+// double-count the disk). It is a no-op off macOS, where nothing mounts there.
+func HideSystemVolumes(devices Devices) Devices {
+	filtered := make(Devices, 0, len(devices))
+	for _, d := range devices {
+		if strings.HasPrefix(d.MountPoint, systemVolumePrefix) {
+			continue
+		}
+		filtered = append(filtered, d)
+	}
+	return filtered
+}
+
 // ForPath returns the device whose mount point is the longest path-prefix of p
 // — the disk p lives on — or nil when no mount point covers it. It is the mount
 // lookup shared by the launcher and the snapshot-covering logic; it

@@ -30,6 +30,23 @@ against a snapshot (growth diff), **\[** and **\]** step the view itself through
 this folder's snapshots, and **O** opens any archived snapshot; snapshot views
 are read-only, with a guided way back to the live disk.
 
+Bare **gdu**, **gdu** \<path\>, and interactive **gdu -d** open an interactive
+**launcher** — the familiar device table with the folder you're in pinned first,
+its disk pinned directly below it, and a Scan-another-folder opener pinned last;
+each row shows its newest snapshot once history exists. **Enter** scans the
+selected row, **s** opens its latest snapshot without scanning, **S** picks a
+specific one, **n** sorts the other disks. When gdu is not running as root, **R**
+restarts it under **sudo** (you are prompted for your password, and the elevated
+gdu reopens the launcher); scanning the whole root volume (**/**) always confirms
+this first. An explicit path pre-selects the folder
+row; a bare launch the folder's disk — and choosing that disk opens at the folder
+you're in, not the disk root (the whole disk is still scanned). On macOS the
+synthetic **/System/Volumes/** volumes are hidden from the launcher (not from the
+classic **gdu -d** table). It is skipped by **\--snapshot**, **-f**,
+**\--read-from-storage**, **\--db**, and non-interactive mode;
+**\--launcher=false** (config **launcher: false**) restores upstream
+scan-immediately behavior.
+
 # COMMANDS
 
 **gdu snapshots \[list\] \[file.parquet\]**
@@ -99,7 +116,13 @@ non-interactive mode
 
 **-t**, **\--top**\[=0\] Show only top X largest files in non-interactive mode
 
-**-d**, **\--show-disks**\[=false\] Show all mounted disks
+**-d**, **\--show-disks**\[=false\] Show all mounted disks (interactively, opens
+the launcher with its disks section focused)
+
+**\--launcher**\[=true\] Open the interactive launcher (folder, its disk, your
+other disks, snapshots) instead of scanning immediately. **\--launcher=false**
+(or **launcher: false** in config) restores upstream scan-immediately behavior.
+Ignored in non-interactive mode.
 
 **-a**, **\--show-apparent-size**\[=false\] Show apparent size
 

@@ -109,6 +109,7 @@ type Flags struct {
 	ArchiveBrowsing    bool     `yaml:"archive-browsing"`
 	CollapsePath       bool     `yaml:"collapse-path"`
 	BrowseParentDirs   bool     `yaml:"browse-parent-dirs"`
+	Launcher           bool     `yaml:"launcher"`
 	ExportThreshold    string   `yaml:"export-threshold"`
 	SaveSnapshots      string   `yaml:"save-snapshots"`
 	NoAutoCompact      bool     `yaml:"no-auto-compact"`
@@ -701,6 +702,16 @@ func (a *App) getOptions() []tui.Option {
 			ui.SetSnapshotsDir(snapshotsDir)
 		})
 	}
+	// Forward the resolved config file to a restart-elevated run: sudo's env
+	// reset would otherwise make the root instance resolve root's config, not the
+	// user's. Only an existing file is worth forwarding.
+	if a.Flags.CfgFile != "" {
+		if _, statErr := os.Stat(a.Flags.CfgFile); statErr == nil {
+			opts = append(opts, func(ui *tui.UI) {
+				ui.SetConfigFilePath(a.Flags.CfgFile)
+			})
+		}
+	}
 	return opts
 }
 
@@ -732,6 +743,42 @@ func (a *App) setNoCross(path string) error {
 	return nil
 }
 
+// launcherEnabled reports whether the interactive launcher should be the front
+// door for this run. It is the default for a plain interactive `gdu` /
+// `gdu <path>` / `gdu -d`, and is skipped by `launcher: false` and by any flag
+// that already names a specific source or target to open directly: an -f
+// import, a --snapshot from the archive, a database scan, or a stored re-read.
+// Interactivity is enforced by the caller (only the TUI implements
+// OpenLauncher).
+func (a *App) launcherEnabled() bool {
+	if !a.Flags.Launcher {
+		return false
+	}
+	if a.Flags.InputFile != "" || a.Flags.Snapshot != "" {
+		return false
+	}
+	if a.Flags.ReadFromStorage || a.Flags.DbPath != "" {
+		return false
+	}
+	return true
+}
+
+// openLauncher validates the default-dir path (so `gdu /missing` still errors
+// before the UI opens, as the classic scan path did) and shows the launcher.
+// pathFromArg — a path named on the command line — is the pre-selection
+// discriminator (explicit path → folder row; bare `gdu`/`gdu -d` → disk row);
+// `-d` no longer affects it.
+func (a *App) openLauncher(ui *tui.UI, path string) error {
+	checkPath := path
+	if build.RootPathPrefix != "" {
+		checkPath = build.RootPathPrefix + path
+	}
+	if _, err := a.PathChecker(checkPath); err != nil {
+		return err
+	}
+	return ui.OpenLauncher(a.Getter, path, len(a.Args) == 1)
+}
+
 func (a *App) runAction(ui UI, path string) error {
 	if a.Flags.Profiling {
 		go func() {
@@ -742,6 +789,15 @@ func (a *App) runAction(ui UI, path string) error {
 			http.HandleFunc("/debug/pprof/trace", pprof.Trace)
 			log.Println(http.ListenAndServe("localhost:6060", nil))
 		}()
+	}
+
+	// The interactive launcher replaces both the standalone device list (`-d`)
+	// and the immediate scan: bare `gdu` and `gdu <path>` land there too.
+	// Only the TUI implements it, so a non-interactive run (stdout/export UI)
+	// never matches and keeps its classic behavior.
+	tuiUI, isTUI := ui.(*tui.UI)
+	if isTUI && a.launcherEnabled() {
+		return a.openLauncher(tuiUI, path)
 	}
 
 	switch {
