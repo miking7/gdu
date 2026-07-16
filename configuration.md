@@ -49,6 +49,13 @@ Export format used with `output-file`: `json` (the default) or `parquet`. When u
 inferred from the output file extension (`.parquet` selects Parquet). Parquet snapshots are
 zstd-compressed and one flat row per entry, ready to query with DuckDB.
 
+Parquet output rejects the scope filters `--top`, `--depth` and `--summarize` (an error at
+startup). A snapshot's manifest claims a complete scan — its rows and totals feed the timeline,
+baselines and launcher recency — so a filtered file must not masquerade as a full scan. Use
+`export-threshold` to bound a snapshot's size instead; it is totals-preserving and recorded in the
+manifest. JSON export does honor those filters, applying the filter first and then the threshold
+rollup to the already-filtered tree.
+
 #### `save-snapshots`
 
 When to write each completed scan as a `snapshot_<timestamp>_<root>.parquet` file in the snapshots
@@ -168,7 +175,14 @@ Do not allow viewing file contents
 
 #### `no-confirm-quit`
 
-Do not ask for confirmation before quitting after a long scan. By default, pressing `q`/`Q` after a scan that took more than a few seconds shows a confirmation dialog so that results are not lost by an accidental key press.
+Do not ask for confirmation before quitting after a long scan. By default, pressing `q`/`Q` shows a
+confirmation dialog when quitting would discard work worth protecting. The prompt is
+snapshot-aware: a completed scan that was archived as a snapshot (the default) quits silently —
+nothing is lost — while a scan whose results were **not** saved confirms once it ran more than a few
+seconds. Mid-scan, quitting confirms when the running scan is recording a snapshot (any duration) or
+has run past the threshold. This flag turns **all** of those off, including the mid-scan
+snapshot-loss confirmation; the choice is session-only when made from the dialog's *don't ask again*
+button and is never written back to config.
 
 #### `follow-symlinks`
 

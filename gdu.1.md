@@ -28,7 +28,10 @@ This fork records history: every completed interactive scan is archived as a
 Parquet snapshot (see **\--save-snapshots**). In the TUI, **S** compares the view
 against a snapshot (growth diff), **\[** and **\]** step the view itself through
 this folder's snapshots, and **O** opens any archived snapshot; snapshot views
-are read-only, with a guided way back to the live disk.
+are read-only, with a guided way back to the live disk. While a scan is still
+running, **Tab** previews the partial tree found so far (**\[**/**\]** still step
+into past snapshots); the two are complementary — **Tab** browses the present
+being built, **\[**/**\]** the past already recorded.
 
 Bare **gdu**, **gdu** \<path\>, and interactive **gdu -d** open an interactive
 **launcher** — the familiar device table with the folder you're in pinned first,
