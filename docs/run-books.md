@@ -17,12 +17,18 @@ scheme and remains valid history.)
    auto-generated (after an upstream rebase they would describe upstream's commits)
 2. `make lint && make test`, commit everything, push `master`
 3. optional local rehearsal: `goreleaser release --snapshot --clean` (artifacts in `dist/`)
-4. tag: `git tag -sa v2026.7.0 -m "gdu v2026.7.0"`
+4. tag: `git tag -a v2026.7.0 -m "gdu v2026.7.0"` — plain `-a`, not `-sa`:
+   no GPG signing key is configured, and `-sa` fails outright rather than falling back
+   (nothing in the release path checks tag signatures)
 5. push **the tag by name** — never `git push --tags`; the repo carries upstream's v5.x
    tags (the workflow's tag filter is the backstop): `git push origin v2026.7.0`
 6. the Release workflow runs tests, cross-builds, and creates a **draft** release whose
    body is exactly `docs/releases/<tag>.md`
 7. review the draft under GitHub → Releases, then **Publish**
+
+If the workflow goes red on the test step, suspect the known flaky `cmd/gdu/app` GUI tests
+before believing it: re-run the failed job from the Actions tab — the tag is unchanged, so
+no re-tagging is needed.
 
 Stable download URLs (archive names carry no version):
 `https://github.com/miking7/gdu/releases/latest/download/gdu_<os>_<arch>.tar.gz`

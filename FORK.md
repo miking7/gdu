@@ -14,6 +14,9 @@ and `duc` caches an index but has no timeline, diff, or time travel.
 
 ## Quickstart
 
+Install with the four lines in [README § Installation](./README.md#installation) — macOS and Linux
+binaries are published on the [releases page](https://github.com/miking7/gdu/releases).
+
 ```sh
 gdu              # the launcher: the folder you're in, its disk, your other disks, your snapshots
                  #   Enter scans the selected row (the completed scan is archived automatically)
