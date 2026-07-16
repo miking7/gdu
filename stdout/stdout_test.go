@@ -16,6 +16,7 @@ import (
 	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -37,6 +38,130 @@ func TestAnalyzePath(t *testing.T) {
 
 	assert.Nil(t, err)
 	assert.Contains(t, output.String(), "nested")
+}
+
+func TestAnalyzePathSaveSnapshot(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	snapshotsDir := t.TempDir()
+	output := bytes.NewBuffer(make([]byte, 10))
+
+	ui := CreateStdoutUI(output, false, false, false, false, false, false, false, "", 0, false, 0)
+	ui.SetAnalyzer(analyze.CreateAnalyzer()) // full tree, as the app does for --save-snapshots always
+	ui.SetSaveSnapshot(snapshotsDir, 0)
+	ui.SetIgnoreDirPaths([]string{"/xxx"})
+	err := ui.AnalyzePath("test_dir", nil)
+	assert.Nil(t, err)
+
+	entries, err := os.ReadDir(snapshotsDir)
+	assert.Nil(t, err)
+	assert.Len(t, entries, 1)
+	assert.True(t, strings.HasPrefix(entries[0].Name(), "snapshot_"))
+	assert.True(t, strings.HasSuffix(entries[0].Name(), ".parquet"))
+	// --save-snapshots must not change the printed output.
+	assert.Contains(t, output.String(), "nested")
+}
+
+// TestSaveSnapshotAnnouncesOnDirCreation pins the announce rule: exactly
+// one stderr line, fired only by the save that creates the archive directory.
+func TestSaveSnapshotAnnouncesOnDirCreation(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	snapshotsDir := filepath.Join(t.TempDir(), "snapshots") // does not exist yet
+	var output, progress bytes.Buffer
+
+	ui := CreateStdoutUI(&output, false, false, false, false, false, false, false, "", 0, false, 0)
+	ui.progressOut = &progress
+	ui.SetAnalyzer(analyze.CreateAnalyzer())
+	ui.SetSaveSnapshot(snapshotsDir, 0)
+	ui.SetIgnoreDirPaths([]string{"/xxx"})
+
+	require.NoError(t, ui.AnalyzePath("test_dir", nil))
+	assert.Contains(t, progress.String(), "gdu: saving snapshots to ")
+	assert.Contains(t, progress.String(), "(set save-snapshots: never to disable)")
+	// The announce goes to stderr; stdout data stays byte-identical.
+	assert.NotContains(t, output.String(), "saving snapshots to")
+
+	// A second save finds the directory in place — no repeat announce.
+	progress.Reset()
+	ui.Analyzer.ResetProgress() // required before re-analyzing with the same UI
+	require.NoError(t, ui.AnalyzePath("test_dir", nil))
+	assert.Empty(t, progress.String())
+}
+
+func TestAnalyzePathAutoCompact(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	snapshotsDir := t.TempDir()
+	require.NoError(t, testanalyze.WriteClosedMonthSnapshot(snapshotsDir))
+	output := bytes.NewBuffer(make([]byte, 10))
+	var progress bytes.Buffer
+
+	// showProgress = false (3rd arg): the piped/non-tty case.
+	ui := CreateStdoutUI(output, false, false, false, false, false, false, false, "", 0, false, 0)
+	ui.progressOut = &progress
+	ui.SetAnalyzer(analyze.CreateAnalyzer())
+	ui.SetSaveSnapshot(snapshotsDir, 0)
+	ui.SetAutoCompact(true)
+	ui.SetIgnoreDirPaths([]string{"/xxx"})
+	err := ui.AnalyzePath("test_dir", nil)
+	assert.Nil(t, err)
+
+	names := []string{}
+	entries, err := os.ReadDir(snapshotsDir)
+	assert.Nil(t, err)
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	// The old daily was folded into a monthly; today's snapshot (open month)
+	// was saved and left alone.
+	assert.Contains(t, names, "monthly_2000-01_data.parquet")
+	assert.NotContains(t, names, "snapshot_20000115T120000_data.parquet")
+	assert.Len(t, names, 2)
+	// Output stays clean for piping, and without a progress terminal the
+	// activity indicator is fully suppressed.
+	assert.NotContains(t, output.String(), "compact")
+	assert.Empty(t, progress.String())
+}
+
+func TestAnalyzePathAutoCompactShowsIndicator(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+
+	snapshotsDir := t.TempDir()
+	require.NoError(t, testanalyze.WriteClosedMonthSnapshot(snapshotsDir))
+	var output, progress bytes.Buffer
+
+	// showProgress = true (3rd arg): the interactive-terminal case.
+	ui := CreateStdoutUI(&output, false, true, false, false, false, false, false, "", 0, false, 0)
+	ui.progressOut = &progress
+	ui.SetAnalyzer(analyze.CreateAnalyzer())
+	ui.SetSaveSnapshot(snapshotsDir, 0)
+	ui.SetAutoCompact(true)
+	ui.SetIgnoreDirPaths([]string{"/xxx"})
+	require.NoError(t, ui.AnalyzePath("test_dir", nil))
+
+	names := []string{}
+	entries, err := os.ReadDir(snapshotsDir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	// Compaction still happens with the indicator enabled.
+	assert.Contains(t, names, "monthly_2000-01_data.parquet")
+	assert.NotContains(t, names, "snapshot_20000115T120000_data.parquet")
+
+	// The activity indicator and Ctrl-C hint were shown on the progress stream…
+	assert.Contains(t, progress.String(), "compacting snapshot archive")
+	assert.Contains(t, progress.String(), "Ctrl-C to skip")
+	// …and never leaked into stdout data.
+	assert.NotContains(t, output.String(), "compacting snapshot archive")
+	// The transient line is wiped when the merge finishes (ends on a clear).
+	assert.True(t, strings.HasSuffix(progress.String(), "\r"),
+		"indicator should clear itself on completion")
 }
 
 func TestShowItemCountInNonInteractiveMode(t *testing.T) {

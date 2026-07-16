@@ -247,6 +247,99 @@ gdu --db analysis.badger /        # saves analysis data to BadgerDB
 gdu -r --db analysis.sqlite /     # reads saved data, does not run analysis again
 ```
 
+## Saving snapshots
+
+Gdu automatically saves every completed **interactive** scan as a compact Parquet **snapshot**, so
+you can track disk usage over time and query the history with tools like
+[DuckDB](https://duckdb.org/). There is nothing to configure: browse a directory, and the scan is
+recorded in the archive (the first save announces where). Piped and scripted runs stay clean —
+non-interactive scans save only when asked:
+
+```
+gdu /                                    # browse as usual; a snapshot is also archived
+gdu -n --save-snapshots always /         # record a non-interactive scan too (e.g. from cron)
+gdu --save-snapshots never /             # this run: browse only, record nothing
+gdu --snapshots-dir ~/snaps /            # use a custom snapshots directory
+```
+
+`--save-snapshots` (yaml key `save-snapshots`) takes `auto` (the default: interactive scans only),
+`always` (every mode; forces the full-tree analyzer non-interactively, which costs memory), or
+`never`. Saving does not change what gdu shows; it writes `snapshot_<timestamp>_<root>.parquet`
+(local time) into the snapshots directory (default `$XDG_DATA_HOME/gdu/snapshots`, i.e.
+`~/.local/share/gdu/snapshots`) as the scan completes. The `<root>` suffix is a lower-case,
+filesystem-safe slug of the scanned path so the file says what it covers at a glance — e.g.
+`snapshot_20260622T204452_volumes_sd.parquet` for `/Volumes/SD`, `…_users_michael.parquet` for
+`/Users/michael`, and `…_root.parquet` for `/`. Snapshots use a default rollup threshold of 10M
+(objects smaller than that are grouped into a `<smaller objects>` row); override it with
+`--export-threshold`.
+
+To see what's archived, `gdu snapshots` (alias `gdu snaps`) prints a table of every snapshot in the
+archive (root, time, size); with a file argument it lists just that file's snapshots:
+
+```
+gdu snapshots                           # every snapshot in the archive
+gdu snapshots monthly.parquet           # the snapshots inside one file
+gdu snaps ls                            # same listing, spelled out (list / ls)
+```
+
+To get a snapshot back, resolve it straight from the archive with `--snapshot` — no file path
+needed. The selector is `latest`, `earliest`, or a local-time prefix (a month `2026-06`, a day
+`2026-06-19`, or a full timestamp), matched against the archive's snapshots of exactly the path you
+name; an ambiguous or unmatched selector lists the candidates (and, if the path has no snapshot of
+its own but a parent does, names the covering roots):
+
+```
+gdu --snapshot latest /Volumes/SD        # reopen the newest snapshot of /Volumes/SD — no disk scan
+gdu --snapshot 2026-06-19 ~              # browse your home dir as it was that day
+gdu --snapshot latest -n --top 20 /      # top-20 report from the archive, disk untouched
+```
+
+A single Parquet file can hold more than one snapshot (`gdu snapshots compact` packs a month of
+daily snapshots into one file). When it does, opening it interactively (`gdu -f <file>`) shows a
+**snapshot picker** — choose a snapshot and it loads; the picker also prints the exact `--snapshot`
+command for your choice. In non-interactive mode (`-n`) the most recent snapshot loads by default and
+a note on stderr says which. Either way, `--snapshot` picks within the file, using a value straight
+from `gdu snapshots <file>`:
+
+```
+gdu -f monthly.parquet --snapshot 2026-06-19            # the snapshot from that day
+gdu -f monthly.parquet --snapshot 2026-06-19T15:30:05   # an exact timestamp
+gdu -f monthly.parquet --snapshot earliest              # oldest snapshot in the file
+gdu -f monthly.parquet --snapshot 2026-06-19 --snapshot-root /home   # disambiguate by root
+```
+
+### Compacting the archive
+
+Daily snapshots add up. `gdu snapshots compact` merges every **closed** month's snapshot files (per
+scan root and host) into one `monthly_<yyyy-mm>_<root>.parquet`, sorted so that the same paths from
+different scans sit next to each other — which compresses far better than separate dailies and keeps
+the archive to one file per month. Compaction is **lossless**: every snapshot remains individually
+loadable (`--snapshot`, or the picker), and source files are deleted only after the merged file has
+been written, re-read and verified against them. The current month is never touched, so it is always
+safe to run — even while other scans are being saved:
+
+```
+gdu snapshots compact --dry-run   # show what would be merged, write nothing
+gdu snapshots compact             # merge closed months, verify, then remove the dailies
+```
+
+Stragglers are fine: a daily that shows up after its month was already compacted (say, copied in
+from a laptop) is folded into the existing monthly on the next run.
+
+You rarely need to run it yourself: whenever a snapshot is saved and some closed month still has
+loose dailies, gdu compacts them right after the save — in the background while you browse, in the
+TUI's case, with a footer indicator and a wait/abort prompt if you quit mid-run (aborting is always
+safe). If another gdu is already compacting, the run is skipped silently. `--no-auto-compact` (or
+`no-auto-compact: true` in the config) turns the automatic run off.
+
+When you scan with `sudo`, gdu writes snapshots into the **invoking** user's
+`~/.local/share/gdu/snapshots` and hands the files back to that user (so they stay readable without
+root). Each row also records `host`,
+`username` (the effective user, e.g. `root`) and `sudo_user` (the invoking user), so you can tell
+which scans ran elevated. For a scheduled root scan (which isn't under `sudo`), `--owner <user>`
+requests the same hand-back. To run scans on a schedule (daily, 6-hourly, …) on macOS or Linux, see
+[docs/scheduling.md](./docs/scheduling.md).
+
 ## Running tests
 
     make install-dev-dependencies

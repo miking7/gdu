@@ -14,6 +14,15 @@ func TestFormatNumber(t *testing.T) {
 	assert.Equal(t, "1,234,567,890", res)
 }
 
+func TestClaimAutoCompactRun(t *testing.T) {
+	ui := &UI{}
+	assert.False(t, ui.ClaimAutoCompactRun(), "disabled: never claimable")
+
+	ui.SetAutoCompact(true)
+	assert.True(t, ui.ClaimAutoCompactRun(), "first claim succeeds")
+	assert.False(t, ui.ClaimAutoCompactRun(), "at most one auto-run per process")
+}
+
 func TestSetFollowSymlinks(t *testing.T) {
 	ui := UI{
 		Analyzer: &MockedAnalyzer{},

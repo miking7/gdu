@@ -5,6 +5,8 @@ package common
 import (
 	"regexp"
 	"strconv"
+	"sync/atomic"
+	"time"
 )
 
 // UI struct
@@ -22,6 +24,15 @@ type UI struct {
 	ShowRelativeSize      bool
 	FilteringFiles        bool
 	ExportThreshold       int64
+	SaveSnapshotEnabled   bool
+	SnapshotsDir          string
+	SnapshotThreshold     int64
+	SnapshotSpec          string    // --snapshot: which snapshot to load from a multi-snapshot input
+	SnapshotRoot          string    // --snapshot-root: disambiguating scan_root filter
+	SnapshotHost          string    // with SnapshotTs: full-identity pin from archive resolution
+	SnapshotTs            time.Time // zero unless SetSnapshotIdentity pinned a snapshot
+	AutoCompactEnabled    bool
+	autoCompactClaimed    atomic.Bool
 }
 
 // SetAnalyzer sets analyzer instance
@@ -54,6 +65,56 @@ func (ui *UI) SetArchiveBrowsing(v bool) {
 // bucketed into a "<smaller objects>" rollup on export. 0 disables the rollup.
 func (ui *UI) SetExportThreshold(v int64) {
 	ui.ExportThreshold = v
+}
+
+// SetSaveSnapshot enables auto-saving each completed scan to dir as a Parquet
+// snapshot, bucketing objects below thresholdBytes.
+func (ui *UI) SetSaveSnapshot(dir string, thresholdBytes int64) {
+	ui.SaveSnapshotEnabled = true
+	ui.SnapshotsDir = dir
+	ui.SnapshotThreshold = thresholdBytes
+}
+
+// SetAutoCompact enables one opportunistic compaction of the snapshot archive
+// after a snapshot is saved (on by default; --no-auto-compact opts out). It
+// only ever takes effect
+// together with SetSaveSnapshot — the save is the trigger.
+func (ui *UI) SetAutoCompact(v bool) {
+	ui.AutoCompactEnabled = v
+}
+
+// ClaimAutoCompactRun claims the process's single opportunistic compaction
+// run: it returns true exactly once, and only when auto-compaction is
+// enabled. UIs call it at their save-snapshot hook so at most one auto-run
+// happens per gdu process no matter how the hook fires — the atomic claim
+// holds even if two scans ever complete concurrently.
+func (ui *UI) ClaimAutoCompactRun() bool {
+	if !ui.AutoCompactEnabled {
+		return false
+	}
+	return ui.autoCompactClaimed.CompareAndSwap(false, true)
+}
+
+// SetSnapshotSelector records which snapshot to load from a multi-snapshot Parquet
+// input: spec is the --snapshot value (empty ⇒ latest) and root the --snapshot-root
+// filter.
+// Stored as primitives so this package needn't import pkg/parquet (which would
+// form a common→parquet→analyze→common cycle); the reading UIs build the
+// parquet.SnapshotSelector from these.
+func (ui *UI) SetSnapshotSelector(spec, root string) {
+	ui.SnapshotSpec = spec
+	ui.SnapshotRoot = root
+}
+
+// SetSnapshotIdentity pins the snapshot to load to one full identity —
+// (host, root, ts) — set by archive resolution, which has already chosen the
+// snapshot. A textual selector would be lossy here (second precision, DST-fold
+// collisions); the identity is not. Overrides any SetSnapshotSelector spec.
+func (ui *UI) SetSnapshotIdentity(root, host string, ts time.Time) {
+	ui.SnapshotSpec = ""
+	ui.SnapshotRoot = root
+	ui.SnapshotHost = host
+	ui.SnapshotTs = ts
 }
 
 // binary multiplies prefixes (IEC)
