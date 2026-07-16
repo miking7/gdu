@@ -49,7 +49,12 @@ func init() {
 	flags.StringVar(&af.CfgFile, "config-file", "", "Read config from file (default is ~/.config/gdu/gdu.yaml, or ~/.gdu.yaml if that exists)")
 	flags.StringVarP(&af.LogFile, "log-file", "l", "/dev/null", "Path to a logfile")
 	flags.StringVarP(&af.OutputFile, "output-file", "o", "", "Export all info into file as JSON")
-	flags.StringVarP(&af.InputFile, "input-file", "f", "", "Import analysis from JSON file")
+	flags.StringVarP(&af.InputFile, "input-file", "f", "", "Import analysis from JSON or Parquet file (format auto-detected)")
+	flags.StringVar(&af.ExportThreshold, "export-threshold", "0",
+		"Bucket objects smaller than this size into a '<smaller objects>' rollup on export. "+
+			"Binary units: 10M, 500K, 2G, or plain bytes. 0 = keep everything.")
+	flags.StringVar(&af.OutputFormat, "output-format", "",
+		"Export format: json (default) or parquet. Inferred from the -o file extension when unset.")
 	flags.IntVarP(&af.MaxCores, "max-cores", "m", runtime.NumCPU(), fmt.Sprintf("Set max cores that Gdu will use. %d cores available", runtime.NumCPU()))
 	flags.BoolVar(&af.SequentialScanning, "sequential", false, "Use sequential scanning (intended for rotating HDDs)")
 	flags.BoolVarP(&af.ShowVersion, "version", "v", false, "Print version")

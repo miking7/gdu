@@ -3,12 +3,18 @@ package report
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/dundee/gdu/v5/pkg/analyze"
+	"github.com/dundee/gdu/v5/pkg/fs"
+	"github.com/dundee/gdu/v5/pkg/parquet"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -40,6 +46,51 @@ func TestReadAnalysis(t *testing.T) {
 	assert.Equal(t, "app_linux_test2.go", alt2.Name)
 	assert.Equal(t, uint64(1234), alt2.Mli)
 	assert.Equal(t, 'H', alt2.Flag)
+}
+
+func TestReadAnalysisParquet(t *testing.T) {
+	root := &analyze.Dir{File: &analyze.File{Name: "root"}, BasePath: "/tmp", ItemCount: 1}
+	root.AddFile(&analyze.File{Name: "f.bin", Size: 2048, Usage: 4096, Parent: root})
+	root.UpdateStats(make(fs.HardLinkedItems))
+
+	var buf bytes.Buffer
+	meta := parquet.ScanMeta{ScanRoot: root.GetPath(), ScanTime: time.Unix(1700000000, 0).UTC()}
+	require.NoError(t, parquet.WriteTree(&buf, root, &meta))
+
+	// ReadAnalysis must detect the PAR1 magic and route to the Parquet reader.
+	dir, err := ReadAnalysis(&buf)
+	require.NoError(t, err)
+	assert.Equal(t, "root", dir.GetName())
+	assert.Equal(t, "/tmp/root", dir.GetPath())
+
+	idx, ok := dir.Files.FindByName("f.bin")
+	require.True(t, ok)
+	assert.Equal(t, int64(4096), dir.Files[idx].GetUsage())
+}
+
+func TestReadAnalysisParquetFile(t *testing.T) {
+	root := &analyze.Dir{File: &analyze.File{Name: "root"}, BasePath: "/tmp", ItemCount: 1}
+	root.AddFile(&analyze.File{Name: "f.bin", Size: 2048, Usage: 4096, Parent: root})
+	root.UpdateStats(make(fs.HardLinkedItems))
+
+	path := filepath.Join(t.TempDir(), "snap.parquet")
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	meta := parquet.ScanMeta{ScanRoot: root.GetPath(), ScanTime: time.Unix(1700000000, 0).UTC()}
+	require.NoError(t, parquet.WriteTree(f, root, &meta))
+	require.NoError(t, f.Close())
+
+	// Passing an *os.File must hit the streaming fast path (no whole-file buffer).
+	in, err := os.Open(path)
+	require.NoError(t, err)
+	defer in.Close()
+
+	dir, err := ReadAnalysis(in)
+	require.NoError(t, err)
+	assert.Equal(t, "root", dir.GetName())
+	idx, ok := dir.Files.FindByName("f.bin")
+	require.True(t, ok)
+	assert.Equal(t, int64(4096), dir.Files[idx].GetUsage())
 }
 
 func TestReadAnalysisWithEmptyInput(t *testing.T) {

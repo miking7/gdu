@@ -19,6 +19,7 @@ import (
 	"github.com/rivo/tview"
 
 	"github.com/dundee/gdu/v5/build"
+	"github.com/dundee/gdu/v5/internal/common"
 	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
 	"github.com/dundee/gdu/v5/pkg/fs"
@@ -423,6 +424,12 @@ func (ui *UI) exportAnalysis() {
 			ui.showErrFromGo("Error writing to file", err)
 			return
 		}
+		if err = file.Close(); err != nil {
+			ui.showErrFromGo("Error closing file", err)
+			return
+		}
+		// Hand the export back to the invoking user when running under sudo.
+		common.ChownToInvoker(ui.exportName)
 	}()
 }
 

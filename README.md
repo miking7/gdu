@@ -126,6 +126,9 @@ Basic list of actions in interactive mode (show help modal for more):
 
     gdu -o- / | gzip -c >report.json.gz   # write all info to JSON file for later analysis
     zcat report.json.gz | gdu -f-         # read analysis from file
+    gdu -o- --export-threshold 10M /      # export, bucketing objects < 10 MiB into "<smaller objects>"
+    gdu -o snapshot.parquet --export-threshold 10M / # export a compact Parquet snapshot (query later with DuckDB)
+    gdu -f snapshot.parquet               # browse a previously exported Parquet snapshot
 
     gdu --db=tmp.badger /                 # use persistent key-value storage for saving analysis data
     gdu --db=tmp.db /                     # use persistent SQLite storage for saving analysis data
@@ -141,7 +144,9 @@ In non-interactive mode (and without `--top` and `--depth` flags), gdu uses a me
 This means memory usage stays constant regardless of how large the scanned directory tree is.
 When `--top` or `--depth` flags are used, the full directory tree is built in memory as in interactive mode.
 
-Export mode (flag `-o`) outputs all usage data as JSON, which can be later opened using the `-f` flag.
+Export mode (flag `-o`) outputs all usage data as JSON (or Parquet with `--output-format parquet` /
+a `.parquet` output file), which can be later opened using the `-f` flag. The input format is detected
+automatically.
 
 Hard links are counted only once.
 
