@@ -74,6 +74,13 @@ or deleting anything.
 **-I**, **\--ignore-dirs-pattern**
     Path patterns to ignore (separated by comma).
     Supports both absolute and relative path patterns.
+    The patterns are Go regular expressions, not shell globs: a glob such as
+    `*/Library/CloudStorage` is rejected at startup, and `.*` is what a glob's
+    `*` should become. A pattern is anchored at the start of the path but not
+    at the end, so `/home/me/.cache` also excludes `/home/me/.cache-old`; write
+    `^`...`$` to mean exactly one directory. To hide the macOS cloud folders
+    (which are otherwise scanned, showing their placeholders as **\~** items):
+    `-I '^(/System/Volumes/Data)?/Users/[^/]+/Library/(CloudStorage|Mobile Documents)$'`
 
 **-X**, **\--ignore-from**
     Read path patterns to ignore from file.
@@ -97,7 +104,16 @@ or deleting anything.
 
 **-c**, **\--no-color**\[=false\] Do not use colorized output
 
-**-x**, **\--no-cross**\[=false\] Do not cross filesystem boundaries
+**-x**, **\--no-cross**\[=false\] Do not cross filesystem boundaries: the mount
+points nested under the scan root are left out of the scan entirely. The
+boundary is resolved for each scan root, so this applies to a folder or disk
+chosen in the launcher, not only to the directory gdu was started in. It also
+applies unasked when the root is a whole disk (chosen as a disk), and when the
+root is **/** on macOS — there firmlinks splice the data volume's **/Users**,
+**/Applications**, **/Library** and **/private** into the root hierarchy, and
+both spellings of a file report the same device and the same inode, so nothing
+but skipping the data volume's mount point stops a scan of **/** from counting
+the machine twice.
 
 **-H**, **\--no-hidden**\[=false\] Ignore hidden directories (beginning with dot)
 

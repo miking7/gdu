@@ -12,7 +12,22 @@ This writes all the options (set to their current values) to the config file gdu
 an existing user config if you have one (`~/.config/gdu/gdu.yaml` is preferred, then legacy
 `~/.gdu.yaml`), else it creates `~/.config/gdu/gdu.yaml`.
 
-Let's go through them one by one:
+## Recommended settings
+
+One:
+
+```yaml
+mouse: true
+```
+
+The two things people used to configure here happen on their own now. A scan no longer faults cloud
+placeholders in, so the hand-written `ignore-dirs` entries for `~/Library/CloudStorage` and
+`Mobile Documents` are not needed to keep it fast — what is stored locally in those folders is still
+counted, and [`ignore-dir-patterns`](#ignore-dir-patterns) is there if you want the trees hidden
+outright. And a macOS scan of `/` skips the data volume's mount point unasked, so `no-cross: true`
+is not what stops it from counting the machine twice.
+
+Let's go through the options one by one:
 
 #### `log-file`
 
@@ -117,6 +132,31 @@ Paths to ignore (separated by comma). Can be absolute (like `/proc`) or relative
 
 Path patterns to ignore (separated by comma). Patterns can be absolute or relative to the current working directory.
 
+The patterns are [Go regular expressions](https://pkg.go.dev/regexp/syntax), **not shell globs**. A
+glob does not quietly match nothing — it fails at startup:
+
+```
+$ gdu -I '*/Library/CloudStorage' /
+Error: error parsing regexp: missing argument to repetition operator: `*`
+```
+
+Write `.*` wherever a glob would use `*`. A pattern is anchored at the start of the path but not at
+the end, so `/home/me/.cache` also excludes `/home/me/.cache-old`; write `^`…`$` yourself when you
+mean exactly one directory.
+
+The recipe for hiding the macOS cloud folders needs all of that. By default they are scanned, with
+their placeholders shown as `~` items (see
+[Cloud placeholders](README.md#cloud-placeholders)); to make the trees invisible instead:
+
+```yaml
+ignore-dir-patterns:
+    - ^(/System/Volumes/Data)?/Users/[^/]+/Library/(CloudStorage|Mobile Documents)$
+```
+
+`[^/]+` covers every user on the machine, the optional `/System/Volumes/Data` prefix covers the
+other spelling of a macOS home directory (the data volume is reachable both ways), and the `^`…`$`
+keeps the pattern from also swallowing a neighbor like `Library/CloudStorage-backup`.
+
 #### `ignore-from-file`
 
 Read path patterns to ignore from file. Patterns can be absolute or relative to the current working directory.
@@ -163,7 +203,13 @@ Do not show progress in non-interactive mode
 
 #### `no-cross`
 
-Do not cross filesystem boundaries
+Do not cross filesystem boundaries: the mount points nested under the scan root are left out of the
+scan entirely.
+
+The boundary is worked out for each scan root, so this means what it says for a folder or a disk
+chosen in the launcher, not only for the directory gdu was started in. Two cases apply it whether
+you set it or not: scanning a whole disk (picked as a disk), and scanning `/` on macOS — see
+[Mount points](README.md#mount-points).
 
 #### `no-hidden`
 
