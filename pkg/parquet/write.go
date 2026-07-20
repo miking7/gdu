@@ -321,6 +321,8 @@ func stampItemAttrs(r *Row, item fs.Item) {
 		r.Hlnkc = true
 	case '!', '.':
 		r.ReadError = true
+	case '~':
+		r.Dataless = true
 	}
 	if ino := item.GetMultiLinkedInode(); ino > 0 {
 		r.Ino = &ino

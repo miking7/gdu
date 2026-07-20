@@ -68,6 +68,18 @@ func (a *StoredAnalyzer) processDir(path string) *StoredDir {
 		dirCount   int
 	)
 
+	// Checked before ReadDir: listing a cloud placeholder is what drags its
+	// whole subtree down from the provider. The leaf still goes to storage so
+	// the browsing UI can open it like any other directory.
+	if dirIsDataless(path) {
+		dir := &StoredDir{Dir: datalessDir(path)}
+		dir.BasePath = filepath.Dir(path)
+		if err := a.storage.StoreDir(dir); err != nil {
+			log.Print(err.Error())
+		}
+		return dir
+	}
+
 	a.wait.Add(1)
 
 	files, err := os.ReadDir(path)

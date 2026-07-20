@@ -48,4 +48,8 @@ type Row struct {
 	Notreg    bool `parquet:"notreg"`     // '@' symlink/socket
 	Hlnkc     bool `parquet:"hlnkc"`      // 'H' hard link
 	ReadError bool `parquet:"read_error"` // '!' or '.'
+	// '~' cloud placeholder, contents evicted to a provider. Optional and added
+	// without a format bump: older files simply lack the column and read as
+	// false, older gdu binaries ignore it.
+	Dataless bool `parquet:"dataless,optional"`
 }

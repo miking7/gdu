@@ -37,6 +37,10 @@ These are command-line only too, not configuration-file keys.
 
 Export all info into file as JSON
 
+JSON export follows ncdu's interchange format, which has fields for the symlink and hard-link flags
+but none for a cloud placeholder. A `~` item therefore exports as an ordinary entry — with its sizes
+intact, only the flag lost. Parquet snapshots carry it in a `dataless` column.
+
 #### `export-threshold`
 
 Bucket objects smaller than this size into a `<smaller objects>` rollup row on export, shrinking the

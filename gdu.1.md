@@ -246,3 +246,14 @@ flag with following meaning:
 **e**
 
 :  Directory is empty.
+
+**\~**
+
+:  Cloud placeholder: the contents are not stored locally (macOS).
+
+On macOS, files and folders evicted to a cloud provider (iCloud Drive, Dropbox, Google Drive,
+OneDrive and anything else built on the same file-provider machinery) are marked **\~**. Evicted
+files keep their real apparent size while occupying no disk blocks, so they are counted exactly as
+the disk sees them. Evicted folders are reported as placeholders and never descended into: listing
+one makes the kernel download its whole subtree from the provider. This needs no configuration and
+cannot be turned off; to hide cloud trees entirely, exclude them with **-I**.
