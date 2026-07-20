@@ -104,6 +104,10 @@ type UI struct {
 	browseParentDirs        bool
 	showDiskProgressBar     bool
 	currentDeviceSize       int64
+	// noCross is --no-cross: keep every scan inside one filesystem. It is held
+	// as the flag, not resolved into ignore paths at startup, because the root
+	// to resolve it against is only known once a scan starts.
+	noCross bool
 	// growth-diff browsing: a session-only baseline snapshot the
 	// current tree is diffed against. nil means normal browsing.
 	baseline   *analyze.Baseline
@@ -496,6 +500,20 @@ func (ui *UI) SetBrowseParentDirs() {
 	ui.browseParentDirs = true
 }
 
+// SetNoCross keeps every scan within one filesystem, skipping the mount points
+// nested under whatever root each scan is started from.
+func (ui *UI) SetNoCross(value bool) {
+	ui.noCross = value
+}
+
+// SetDevicesGetter sets the source of the mount table. The launcher and the
+// device screen also set it when they list devices, but a scan needs it too —
+// to resolve its mount boundary — so it is wired up even for a run that opens
+// neither.
+func (ui *UI) SetDevicesGetter(getter device.DevicesInfoGetter) {
+	ui.getter = getter
+}
+
 // SetCollapsePath sets the flag to collapse paths
 func (ui *UI) SetCollapsePath(value bool) {
 	ui.collapsePath = value
@@ -613,14 +631,13 @@ func (ui *UI) deviceItemSelected(row, column int) {
 		return
 	}
 
-	ui.applyNestedMountIgnores(selectedDevice.MountPoint)
-
 	ui.resetSorting()
 
 	ui.currentDeviceSize = selectedDevice.Size
 	ui.Analyzer.ResetProgress()
 	ui.linkedItems = make(fs.HardLinkedItems)
-	if err := ui.AnalyzePath(selectedDevice.MountPoint, nil); err != nil {
+	// Measuring a device: the scan stops at the mounts nested inside it.
+	if err := ui.analyzePath(selectedDevice.MountPoint, nil, scanOpts{wholeDevice: true}); err != nil {
 		ui.showErr("Error analyzing device", err)
 	}
 }

@@ -571,14 +571,12 @@ func (ui *UI) launcherRunScan(r *launcherRow) {
 	ui.closeLauncher()
 	ui.resetSorting()
 
-	// Reset the mount boundary and device size, so a prior disk scan's never
-	// leak into a later folder scan (reachable via the
-	// left-arrow-returns-to-launcher flow).
-	ui.SetNestedMountPaths(nil)
+	// Clear the device size so a prior disk scan's size never leaks into a
+	// later folder scan (reachable via the left-arrow-returns-to-launcher
+	// flow). The scan's mount boundary is resolved per scan, in analyzePath.
 	ui.currentDeviceSize = 0
-
-	if r.kind == launcherDisk && r.dev != nil {
-		ui.applyNestedMountIgnores(r.dev.MountPoint)
+	wholeDevice := r.kind == launcherDisk && r.dev != nil
+	if wholeDevice {
 		ui.currentDeviceSize = r.dev.Size
 	}
 
@@ -586,7 +584,7 @@ func (ui *UI) launcherRunScan(r *launcherRow) {
 	ui.linkedItems = make(fs.HardLinkedItems)
 	// landPath lands the view at the default dir when this is the pinned own-disk
 	// row; for every other row it equals the scanned root.
-	if err := ui.analyzePath(r.root, nil, scanOpts{landPath: r.landPath()}); err != nil {
+	if err := ui.analyzePath(r.root, nil, scanOpts{landPath: r.landPath(), wholeDevice: wholeDevice}); err != nil {
 		ui.showErr("Error analyzing path", err)
 	}
 }

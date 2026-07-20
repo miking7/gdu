@@ -95,6 +95,24 @@ type scanOpts struct {
 	// lands on instead of the scan root — the launcher's pinned own-disk row
 	// scans the whole disk but shows the default dir.
 	landPath string
+	// wholeDevice marks a scan whose root is a mount point chosen as a disk —
+	// a launcher disk row or the classic device screen. Such a scan measures
+	// that device, so it always stops at the mounts nested inside it.
+	wholeDevice bool
+}
+
+// applyScanBoundary decides whether the scan about to run at root stops at the
+// mount points nested under it, and records the boundary for exactly that scan.
+//
+// It resolves per scan root rather than once at startup because the launcher
+// lets the user choose the root after gdu has started: a --no-cross resolved
+// against the working directory says nothing about the disk they then pick.
+func (ui *UI) applyScanBoundary(root string, opts scanOpts) {
+	if opts.wholeDevice || ui.noCross || device.ScanRootAliasesMounts(root) {
+		ui.applyNestedMountIgnores(root)
+		return
+	}
+	ui.SetNestedMountPaths(nil)
 }
 
 // AnalyzePath analyzes recursively disk usage for given path
@@ -109,6 +127,8 @@ func (ui *UI) AnalyzePath(path string, parentDir fs.Item) error {
 //
 //nolint:funlen // Why: one cohesive scan setup + completion sequence
 func (ui *UI) analyzePath(path string, parentDir fs.Item, opts scanOpts) error {
+	ui.applyScanBoundary(path, opts)
+
 	ui.progress = tview.NewTextView().SetText("Scanning...")
 	ui.progress.SetBorder(true).SetBorderPadding(2, 2, 2, 2)
 	ui.progress.SetTitle(" Scanning... ")

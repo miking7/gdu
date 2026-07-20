@@ -171,14 +171,29 @@ gdu can export/import scans as Apache Parquet and auto-archive them for trend an
   `scanOpts.landPath` (honored by `finishRootScan` when the scan root covers it) and as the `s`/`S`
   open's `wantPath`; the whole disk is still scanned and `scan_root` is the mount.
   **macOS `/System/Volumes/*` are hidden from the launcher display only
-  (`device.HideSystemVolumes`); `ui.devices` stays UNFILTERED so `launcherScan`'s nested-mount ignores
-  don't double-count `/System/Volumes/Data` when scanning `/`.** Snapshot↔row mapping is
+  (`device.HideSystemVolumes`); `ui.devices` stays UNFILTERED because snapshot row-mapping resolves a
+  path to its disk through it.** (Nested-mount ignores do *not* come from `ui.devices` — see the
+  scan-boundary bullet below.) Snapshot↔row mapping is
   **mount-accurate (`launcherRowMapsSnapshot`)**: disk rows match `scan_root == mount` exactly;
   the folder row matches roots between its most-specific mount (longest prefix over `ui.devices`) and
   itself — never path-covering alone. `ui.launcher` (a `*launcherState`) doubles as the async-fill
   generation guard. The **read-error count** the sudo tip cites is persisted per snapshot in the
   footer manifest (`SnapshotInfo.ErrCount`, counted at write time by `countReadErrorDirs`; rounds
   through compaction for free).
+- **Scan boundary (which nested mounts a scan skips) is resolved per scan root**, at the top of
+  `analyzePath` (`applyScanBoundary`, [tui/actions.go](tui/actions.go)) — not once at startup, because
+  the launcher lets the user pick the root *after* startup, which is what made `no-cross: true` a
+  silent no-op for launcher scans. It applies when `scanOpts.wholeDevice` (launcher disk row,
+  classic `-d` `deviceItemSelected`), when `ui.noCross` (`SetNoCross` ← `Flags.NoCross`), or when
+  `device.ScanRootAliasesMounts(root)` (build-tagged: darwin `/` only — firmlinks splice the data
+  volume into `/`, same st_dev *and* same inode both ways, so only a path ignore can stop the double
+  count). The mounts come from the **raw** `getter.GetMounts()`, never `GetDevicesInfo()` (whose
+  `/dev`-name filter drops autofs, nullfs and transient Time Machine local-snapshot mounts), and land
+  in their own per-scan exact-path set via `common.UI.SetNestedMountPaths` — *never* in
+  `IgnoreDirPathPatterns`, which belongs to the user's `-I`. `ui.getter` is therefore always wired
+  (`SetDevicesGetter` from `getOptions`), even when neither launcher nor `-d` opens. The app layer's
+  `setNoCross` keeps the same rule for stdout/export (their scan root *is* the startup path) and
+  **skips the TUI** so no startup-derived residue lingers in `Flags.IgnoreDirs` for the session.
 - **Restart-elevated** ([tui/launcher_sudo.go](tui/launcher_sudo.go)): the sudo tip now
   advertises **`R`** (manual restart) and a **forced-but-cancelable prompt fires only when the scan
   root is `/`** — `launcherScan` gates on `isRootVolume` before `launcherRunScan` (the renamed scan
