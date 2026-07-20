@@ -4,6 +4,7 @@ package stdout
 
 import (
 	"bytes"
+	"path/filepath"
 	"testing"
 
 	log "github.com/sirupsen/logrus"
@@ -19,7 +20,9 @@ func init() {
 func TestShowDevicesWithErr(t *testing.T) {
 	output := bytes.NewBuffer(make([]byte, 10))
 
-	getter := device.LinuxDevicesInfoGetter{MountsPath: "/xyzxyz"}
+	// a fresh TempDir subpath cannot exist, unlike a fixed absolute path a
+	// root-run test elsewhere might have left behind
+	getter := device.LinuxDevicesInfoGetter{MountsPath: filepath.Join(t.TempDir(), "nonexistent")}
 	ui := CreateStdoutUI(output, false, true, false, false, false, false, false, "", 0, false, 0)
 	err := ui.ListDevices(getter)
 

@@ -43,15 +43,18 @@ func TestListDevicesWithErr(t *testing.T) {
 }
 
 func TestOutputFileError(t *testing.T) {
+	// a path whose parent does not exist fails to open for every user — an
+	// unwritable absolute path would succeed (and leave the file behind) when
+	// the suite runs as root
 	out, err := runApp(
-		&Flags{LogFile: "/dev/null", OutputFile: "/xyzxyz"},
+		&Flags{LogFile: "/dev/null", OutputFile: filepath.Join(t.TempDir(), "no-such-dir", "out.json")},
 		[]string{},
 		false,
 		testdev.DevicesInfoGetterMock{},
 	)
 
 	assert.Empty(t, out)
-	assert.Contains(t, err.Error(), "permission denied")
+	assert.Contains(t, err.Error(), "no such file or directory")
 }
 
 func TestUseStorage(t *testing.T) {

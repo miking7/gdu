@@ -12,6 +12,9 @@ import (
 )
 
 func TestRemoveFileWithErr(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0 does not restrict root, so the permission failure cannot be provoked")
+	}
 	fin := testdir.CreateTestDir()
 	defer fin()
 

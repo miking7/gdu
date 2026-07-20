@@ -157,6 +157,9 @@ func TestExportAnalysisWithName(t *testing.T) {
 }
 
 func TestExportAnalysisWithoutRights(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0 does not restrict root, so the permission failure cannot be provoked")
+	}
 	parentDir := &analyze.Dir{
 		File: &analyze.File{
 			Name: "parent",
