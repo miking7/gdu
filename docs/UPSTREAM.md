@@ -112,6 +112,26 @@ phase isn't ready to compact, don't replay the messy tail onto the new base. Eit
   the decision log entry for the round.
 - Cut mechanics live in [run-books.md](run-books.md).
 
+## Delegating a phase to an agent
+
+Every phase above is documented to the point where an agent session can run it — CLAUDE.md points
+here, so a plain request is enough. Canonical request shapes (adjust names, dates, tags):
+
+- **Sync round** — *"Run an upstream sync round per docs/UPSTREAM.md: analyze what upstream added
+  since our base, discuss the integration decisions with me, then plan, rebase, verify, and hand
+  the branch back for review."* The decision discussion comes before any rebase; the agent should
+  not resolve a fork-territory clash without agreement.
+- **Cut a release** — *"Cut release vYYYY.M.P per docs/run-books.md: write docs/releases/<tag>.md
+  from the template and the decision log, run lint and tests, tag, push the tag by name, and tell
+  me when the draft is ready."* Publishing the draft release stays a human click.
+- **Compact a phase** — *"Compact dev/<branch> per docs/UPSTREAM.md: archive-tag the dev tip, fold
+  the tail into clean stack commits on master, delete the dev branch."*
+- **Land a sync branch** — *"Land sync/<branch> per docs/UPSTREAM.md step 6."*
+
+Two standing rules for any delegated phase: the agent confirms the exact SHAs/tags it derived
+before anything irreversible (tags, force-pushes, releases), and it reports what it verified, not
+just what it changed.
+
 ## Decision log
 
 Append one entry per sync round (and per decision of record between rounds). Keep entries ~10
@@ -140,5 +160,8 @@ lines: range, decisions with one-line rationales, deviations, artifacts.
   the sequential/stable analyzers, so mid-scan preview no-ops there (works under the default
   parallel analyzer); several upstream tests assume non-root and misbehave in root containers
   (`/xyzxyz`, permission-error fixtures).
-- Artifacts: transient plan doc (dropped at landing), `archive/pre-rebase-*` tag at landing,
+- Artifacts: transient plan doc (dropped at landing), `archive/pre-rebase-20260720` at landing,
   release `v2026.7.x` planned.
+- Post-landing appends: the mounts-parser guard and a root-proofed test suite (both
+  upstream-bound — slot to layer 1 at the next sync) and this delegation section. The suite now
+  passes fully in root containers.
