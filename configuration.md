@@ -140,9 +140,11 @@ $ gdu -I '*/Library/CloudStorage' /
 Error: error parsing regexp: missing argument to repetition operator: `*`
 ```
 
-Write `.*` wherever a glob would use `*`. A pattern is anchored at the start of the path but not at
-the end, so `/home/me/.cache` also excludes `/home/me/.cache-old`; write `^`…`$` yourself when you
-mean exactly one directory.
+Write `.*` wherever a glob would use `*`. Anchoring is the other trap: the comma-separated patterns
+(each doubled with an absolute/relative counterpart of itself) are OR'd into one expression in which
+only the first pattern is anchored at the start and none at the end — so `/home/me/.cache` also
+excludes `/home/me/.cache-old`, and a pattern after the first can match anywhere in the path. Write
+`^`…`$` yourself when you mean exactly one directory.
 
 The recipe for hiding the macOS cloud folders needs all of that. By default they are scanned, with
 their placeholders shown as `~` items (see

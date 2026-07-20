@@ -76,9 +76,10 @@ or deleting anything.
     Supports both absolute and relative path patterns.
     The patterns are Go regular expressions, not shell globs: a glob such as
     `*/Library/CloudStorage` is rejected at startup, and `.*` is what a glob's
-    `*` should become. A pattern is anchored at the start of the path but not
-    at the end, so `/home/me/.cache` also excludes `/home/me/.cache-old`; write
-    `^`...`$` to mean exactly one directory. To hide the macOS cloud folders
+    `*` should become. Only the first pattern is anchored, and only at the
+    start: `/home/me/.cache` also excludes `/home/me/.cache-old`, and later
+    patterns can match anywhere in the path. Write `^`...`$` to mean exactly
+    one directory. To hide the macOS cloud folders
     (which are otherwise scanned, showing their placeholders as **\~** items):
     `-I '^(/System/Volumes/Data)?/Users/[^/]+/Library/(CloudStorage|Mobile Documents)$'`
 

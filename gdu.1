@@ -74,10 +74,11 @@ Supports both absolute and relative path patterns.
 The patterns are Go regular expressions, not shell globs: a glob such as
 \f[CR]*/Library/CloudStorage\f[R] is rejected at startup, and
 \f[CR].*\f[R] is what a glob\[cq]s \f[CR]*\f[R] should become.
-A pattern is anchored at the start of the path but not at the end, so
+Only the first pattern is anchored, and only at the start:
 \f[CR]/home/me/.cache\f[R] also excludes
-\f[CR]/home/me/.cache\-old\f[R]; write \f[CR]\[ha]\f[R]\&...\f[CR]$\f[R]
-to mean exactly one directory.
+\f[CR]/home/me/.cache\-old\f[R], and later patterns can match anywhere
+in the path.
+Write \f[CR]\[ha]\f[R]\&...\f[CR]$\f[R] to mean exactly one directory.
 To hide the macOS cloud folders (which are otherwise scanned, showing
 their placeholders as \f[B]\[ti]\f[R] items):
 \f[CR]\-I \[aq]\[ha](/System/Volumes/Data)?/Users/[\[ha]/]+/Library/(CloudStorage|Mobile Documents)$\[aq]\f[R]
