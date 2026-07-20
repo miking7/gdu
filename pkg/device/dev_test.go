@@ -26,6 +26,27 @@ func TestNested(t *testing.T) {
 	assert.Equal(t, "/xxx/yyy", mountsNested[0])
 }
 
+func TestNestedMatchesOnPathBoundaries(t *testing.T) {
+	sd := &Device{MountPoint: "/Volumes/SD"}
+	sdCard := &Device{MountPoint: "/Volumes/SDCard"}
+	inside := &Device{MountPoint: "/Volumes/SD/nested"}
+
+	nested := GetNestedMountpointsPaths("/Volumes/SD", Devices{sd, sdCard, inside})
+
+	assert.Equal(t, []string{"/Volumes/SD/nested"}, nested,
+		"a sibling volume sharing a name prefix is not nested")
+}
+
+func TestNestedUnderRoot(t *testing.T) {
+	root := &Device{MountPoint: "/"}
+	data := &Device{MountPoint: "/System/Volumes/Data"}
+
+	nested := GetNestedMountpointsPaths("/", Devices{root, data})
+
+	assert.Equal(t, []string{"/System/Volumes/Data"}, nested,
+		"a / scan is bounded by every other mount, but not by itself")
+}
+
 func TestSortByName(t *testing.T) {
 	item := &Device{
 		Name: "/xxx",

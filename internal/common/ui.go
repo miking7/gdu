@@ -33,6 +33,10 @@ type UI struct {
 	SnapshotTs            time.Time // zero unless SetSnapshotIdentity pinned a snapshot
 	AutoCompactEnabled    bool
 	autoCompactClaimed    atomic.Bool
+	// nestedMountPaths holds the mount points nested under the root of the
+	// current scan (see SetNestedMountPaths). It is scan state, replaced per
+	// scan, and deliberately not the user's ignore configuration.
+	nestedMountPaths map[string]struct{}
 }
 
 // SetAnalyzer sets analyzer instance

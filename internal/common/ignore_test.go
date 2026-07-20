@@ -9,6 +9,7 @@ import (
 
 	"github.com/dundee/gdu/v5/internal/common"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -44,6 +45,60 @@ func TestIgnoreByAbsPath(t *testing.T) {
 
 	assert.True(t, shouldBeIgnored("abc", "/abc"))
 	assert.False(t, shouldBeIgnored("xxx", "/xxx"))
+}
+
+func TestIgnoreByNestedMountPath(t *testing.T) {
+	ui := &common.UI{}
+	ui.SetNestedMountPaths([]string{"/mnt/data"})
+	shouldBeIgnored := ui.CreateIgnoreFunc()
+
+	assert.True(t, shouldBeIgnored("data", "/mnt/data"))
+	assert.False(t, shouldBeIgnored("datax", "/mnt/datax"))
+}
+
+func TestNestedMountPathsAreReplacedWholesale(t *testing.T) {
+	ui := &common.UI{}
+	ui.SetNestedMountPaths([]string{"/mnt/first"})
+	ui.SetNestedMountPaths([]string{"/mnt/second"})
+
+	shouldBeIgnored := ui.CreateIgnoreFunc()
+	assert.False(t, shouldBeIgnored("first", "/mnt/first"), "the previous scan's mounts do not linger")
+	assert.True(t, shouldBeIgnored("second", "/mnt/second"))
+
+	ui.SetNestedMountPaths(nil)
+	assert.False(t, ui.CreateIgnoreFunc()("second", "/mnt/second"), "nil clears the set")
+}
+
+func TestNestedMountPathsDoNotDisturbUserIgnores(t *testing.T) {
+	ui := &common.UI{}
+	ui.SetIgnoreDirPaths([]string{"/abc"})
+	require.NoError(t, ui.SetIgnoreDirPatterns([]string{"/[xyz]+"}))
+	ui.SetIgnoreHidden(true)
+	ui.SetNestedMountPaths([]string{"/mnt/data"})
+
+	shouldBeIgnored := ui.CreateIgnoreFunc()
+	assert.True(t, shouldBeIgnored("abc", "/abc"), "configured path still ignored")
+	assert.True(t, shouldBeIgnored("xyz", "/xyz"), "configured pattern still ignored")
+	assert.True(t, shouldBeIgnored(".git", "/.git"), "hidden dirs still ignored")
+	assert.True(t, shouldBeIgnored("data", "/mnt/data"), "nested mount ignored")
+	assert.False(t, shouldBeIgnored("other", "/other"))
+
+	// Clearing the mounts must leave every configured check intact.
+	ui.SetNestedMountPaths(nil)
+	shouldBeIgnored = ui.CreateIgnoreFunc()
+	assert.True(t, shouldBeIgnored("abc", "/abc"))
+	assert.True(t, shouldBeIgnored("xyz", "/xyz"))
+	assert.True(t, shouldBeIgnored(".git", "/.git"))
+	assert.False(t, shouldBeIgnored("data", "/mnt/data"))
+}
+
+func TestIgnoreNestedMountWithRegexMetacharacters(t *testing.T) {
+	ui := &common.UI{}
+	ui.SetNestedMountPaths([]string{"/Volumes/Backups (2026) + old"})
+	shouldBeIgnored := ui.CreateIgnoreFunc()
+
+	assert.True(t, shouldBeIgnored("Backups (2026) + old", "/Volumes/Backups (2026) + old"))
+	assert.False(t, shouldBeIgnored("Backups 2026  old", "/Volumes/Backups 2026  old"))
 }
 
 func TestIgnoreByPattern(t *testing.T) {

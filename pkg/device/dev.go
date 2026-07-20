@@ -21,7 +21,16 @@ func (d Device) GetUsage() int64 {
 
 // DevicesInfoGetter is type for GetDevicesInfo function
 type DevicesInfoGetter interface {
+	// GetMounts returns the raw mount table. This is the list to compute
+	// nested-mount ignores from — it is the only one that is complete.
 	GetMounts() (Devices, error)
+	// GetDevicesInfo returns the mounts that represent a browsable disk, with
+	// their size and free space filled in. It keeps only mounts whose device
+	// name looks like a real block device, so it is a **display-only** list —
+	// never use it for nested-mount ignore computation. It silently drops
+	// autofs, nullfs and transient Time Machine local-snapshot mounts, and a
+	// scan that fails to ignore those descends into them and counts the same
+	// bytes twice.
 	GetDevicesInfo() (Devices, error)
 }
 
@@ -97,12 +106,15 @@ func pathWithinMount(mount, p string) bool {
 	return strings.HasPrefix(p, mount)
 }
 
-// GetNestedMountpointsPaths returns paths of nested mount points
+// GetNestedMountpointsPaths returns paths of nested mount points.
+// mounts must be the raw mount table (GetMounts), not GetDevicesInfo.
 func GetNestedMountpointsPaths(path string, mounts Devices) []string {
 	paths := make([]string, 0, len(mounts))
 
 	for _, mount := range mounts {
-		if strings.HasPrefix(mount.MountPoint, path) && mount.MountPoint != path {
+		// Match on path boundaries, or a scan of /Volumes/SD would also skip a
+		// separate volume mounted at /Volumes/SDCard.
+		if mount.MountPoint != path && pathWithinMount(path, mount.MountPoint) {
 			paths = append(paths, mount.MountPoint)
 		}
 	}

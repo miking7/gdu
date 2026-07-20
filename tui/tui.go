@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"regexp"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -188,13 +187,9 @@ type UI struct {
 	// holds the current launcher screen (nil when it isn't shown; the pointer
 	// also guards its async fill). usingLauncher stays true once the launcher is
 	// the navigation home, so left-arrow at a live tree's top returns there
-	// rather than to the standalone device list. launcherBaseIgnore is the
-	// user's configured --ignore-dirs-pattern captured once at OpenLauncher, so
-	// a folder scan can restore it after a disk scan overwrote it with that
-	// disk's nested-mount ignores.
-	launcher           *launcherState
-	usingLauncher      bool
-	launcherBaseIgnore *regexp.Regexp
+	// rather than to the standalone device list.
+	launcher      *launcherState
+	usingLauncher bool
 }
 
 type deleteQueueItem struct {
@@ -613,25 +608,19 @@ func (ui *UI) fileItemSelected(row, column int) {
 }
 
 func (ui *UI) deviceItemSelected(row, column int) {
-	var err error
 	selectedDevice, ok := ui.table.GetCell(row, column).GetReference().(*device.Device)
 	if !ok {
 		return
 	}
 
-	paths := device.GetNestedMountpointsPaths(selectedDevice.MountPoint, ui.devices)
-	ui.IgnoreDirPathPatterns, err = common.CreateIgnorePattern(paths)
-	if err != nil {
-		log.Printf("Creating path patterns for other devices failed: %s", paths)
-	}
+	ui.applyNestedMountIgnores(selectedDevice.MountPoint)
 
 	ui.resetSorting()
 
 	ui.currentDeviceSize = selectedDevice.Size
 	ui.Analyzer.ResetProgress()
 	ui.linkedItems = make(fs.HardLinkedItems)
-	err = ui.AnalyzePath(selectedDevice.MountPoint, nil)
-	if err != nil {
+	if err := ui.AnalyzePath(selectedDevice.MountPoint, nil); err != nil {
 		ui.showErr("Error analyzing device", err)
 	}
 }

@@ -58,6 +58,30 @@ func (ui *UI) ListDevices(getter device.DevicesInfoGetter) error {
 	return nil
 }
 
+// applyNestedMountIgnores excludes the mount points nested under root from the
+// next scan, so it stays on one filesystem instead of descending into every
+// volume mounted below it.
+//
+// It reads the RAW mount table, not the device list the screens display: that
+// one keeps only mounts whose device name looks like a block device, which
+// silently drops autofs, nullfs and the transient Time Machine local-snapshot
+// mounts macOS creates while a backup runs — exactly the ones a scan of / must
+// not descend into. Failing to load the table is not fatal: the scan proceeds
+// without the ignores, as it always has.
+func (ui *UI) applyNestedMountIgnores(root string) {
+	if ui.getter == nil {
+		ui.SetNestedMountPaths(nil)
+		return
+	}
+	mounts, err := ui.getter.GetMounts()
+	if err != nil {
+		log.Printf("Loading mount points failed, scanning without nested-mount ignores: %s", err)
+		ui.SetNestedMountPaths(nil)
+		return
+	}
+	ui.SetNestedMountPaths(device.GetNestedMountpointsPaths(root, mounts))
+}
+
 // scanOpts modifies how a scan integrates with the view and recording model.
 type scanOpts struct {
 	// transient scans — `r` refreshes and go-live spot-rescans — never save a
