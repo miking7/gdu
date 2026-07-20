@@ -3,7 +3,8 @@
 This is a fork of [**dundee/gdu**](https://github.com/dundee/gdu), the fast parallel disk-usage
 analyzer. It is deliberately kept **upstreamable** — it holds gdu's constraints (`CGO_ENABLED=0`,
 pure-Go dependencies, every cross-compile target builds, full tests + docs) so the additions could be
-contributed back.
+contributed back. How the fork tracks upstream — the sync cycle, versioning, and the per-round
+decision log — is recorded in [docs/UPSTREAM.md](docs/UPSTREAM.md).
 
 Everything in upstream gdu works exactly as before. What the fork adds is **history**: upstream gdu
 answers "what's eating my disk right now?"; the fork answers that **plus** "what grew?", "what did it

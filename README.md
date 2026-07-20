@@ -1,35 +1,30 @@
-# go DiskUsage()
+# gdu — disk usage with history
 
 <img src="./gdu.png" alt="Gdu " width="200" align="right">
 
-[![Codecov](https://codecov.io/gh/dundee/gdu/branch/master/graph/badge.svg)](https://codecov.io/gh/dundee/gdu)
-[![Go Report Card](https://goreportcard.com/badge/github.com/dundee/gdu)](https://goreportcard.com/report/github.com/dundee/gdu)
-[![Maintainability](https://api.codeclimate.com/v1/badges/30d793274607f599e658/maintainability)](https://codeclimate.com/github/dundee/gdu/maintainability)
-[![CodeScene Code Health](https://codescene.io/projects/13129/status-badges/code-health)](https://codescene.io/projects/13129)
+Fast parallel disk usage analyzer (TUI + CLI) with **time travel**: every completed scan is
+archived as a compact snapshot, and the TUI can diff against, step through, and reopen any of
+them.
 
-Pretty fast disk usage analyzer written in Go.
+When the disk is mysteriously full *again*: scan it, press `S`, pick the snapshot from last
+month, press Enter — every row now carries a signed Δ, sorted so the biggest grower is on top.
+Follow the ▲ trail downward to the culprit. Two keys from scan to answer. `[`/`]` time-travel
+the view itself; `Tab` previews the partial tree found so far while a scan is still running;
+`O` opens any snapshot; snapshot views are read-only with a guided way back to live. Bare `gdu`
+opens a **launcher** — the folder you're in, its disk, your other disks, and your snapshots of
+each — instead of a blind scan (`launcher: false` restores scan-immediately). See
+**[FORK.md](./FORK.md)** for the journeys and reference, and
+**[docs/scheduling.md](./docs/scheduling.md)** for scheduling periodic scans so the history
+builds itself.
 
-Gdu is intended primarily for SSD disks where it can fully utilize parallel processing.
-However HDDs work as well, but the performance gain is not so huge.
-
-> **This is a fork of [dundee/gdu](https://github.com/dundee/gdu), kept upstreamable.** It adds
-> **disk usage with history**: every completed scan is archived as a Parquet snapshot, and the TUI
-> can diff against, step through, and reopen any of them. When the disk is mysteriously full again:
-> scan it, press `S`, pick the snapshot from last month, press Enter — every row now carries a
-> signed Δ, sorted so the biggest grower is on top. Follow the ▲ trail downward to the culprit.
-> Two keys from scan to answer. (`[`/`]` time-travel the view itself; `Tab` previews the partial
-> tree found so far while a scan is still running; `O` opens any snapshot; snapshot views are
-> read-only with a guided way back to live.) Bare `gdu` opens a **launcher** —
-> the folder you're in, its disk, your other disks, and your snapshots of each — instead of a blind
-> scan (`launcher: false` restores scan-immediately).
-> See **[FORK.md](./FORK.md)** for the journeys and reference, and
-> **[docs/scheduling.md](./docs/scheduling.md)** for scheduling periodic scans on macOS/Linux.
-
-[![asciicast](https://asciinema.org/a/382738.svg)](https://asciinema.org/a/382738)
-
-<a href="https://repology.org/project/gdu/versions">
-    <img src="https://repology.org/badge/vertical-allrepos/gdu.svg" alt="Packaging status" align="right">
-</a>
+**Built on [dundee/gdu](https://github.com/dundee/gdu)** — everything upstream gdu does works
+here unchanged, at upstream speed, with upstream keys ([demo](https://asciinema.org/a/382738)),
+optimized for SSDs where parallel scanning shines (HDDs work too, with a smaller gain). The fork
+tracks upstream, keeps its engineering constraints (pure Go, `CGO_ENABLED=0`, the full
+cross-platform build matrix), and aims to contribute back what fits;
+[docs/UPSTREAM.md](./docs/UPSTREAM.md) records how it stays in sync and why. Note that distro
+packages of `gdu` are upstream's — snapshots and time travel ship only through this fork's
+[releases](https://github.com/miking7/gdu/releases), below.
 
 ## Installation
 
