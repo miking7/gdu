@@ -21,6 +21,16 @@ func TestGetDevicesInfoFail(t *testing.T) {
 	assert.Equal(t, "open /xxxyyy: no such file or directory", err.Error())
 }
 
+func TestMalformedMountsLinesSkipped(t *testing.T) {
+	mounts, err := readMountsFile(strings.NewReader(`gibberish
+
+/dev/nvme0n1p2 /home ext4 rw,relatime 0 0`))
+
+	assert.Nil(t, err)
+	assert.Len(t, mounts, 1)
+	assert.Equal(t, "/home", mounts[0].MountPoint)
+}
+
 func TestSnapMountsNotShown(t *testing.T) {
 	mounts, _ := readMountsFile(strings.NewReader(`/dev/loop4 /var/lib/snapd/snap/core18/1944 squashfs ro,nodev,relatime 0 0
 /dev/loop3 /var/lib/snapd/snap/core20/904 squashfs ro,nodev,relatime 0 0

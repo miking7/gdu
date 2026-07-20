@@ -56,6 +56,12 @@ func readMountsFile(file io.Reader) (mounts Devices, err error) {
 		line := scanner.Text()
 		parts := strings.Fields(line)
 
+		// a mounts line is "device mountpoint fstype options freq passno";
+		// skip anything shorter (blank or truncated lines) instead of panicking
+		if len(parts) < 3 {
+			continue
+		}
+
 		device := &Device{
 			Name:       parts[0],
 			MountPoint: unescapeString(parts[1]),
