@@ -391,15 +391,27 @@ the old history hint, the picker titles, and the help screen's History section.
 
 ## 9. Phasing (each stage ships)
 
-1. **Header + grammar**: ●/◇ glyphs, always-on Viewing line, Δ shown/hidden tails, copy
+Stages are strictly sequential: each bases on the previous stage's merged result.
+**Copy staging:** a stage advertises only keys that exist when it ships — the §7 inventory
+is the *final* state; transitional copy is expected mid-sequence and stage 4 retires the
+last of it. Each stage keeps the help screen truthful for any key it adds, removes, or
+moves; the full help restructure is stage 6's.
+
+1. **Header + grammar**: ●/◇ glyphs with fallbacks, always-on Viewing line, ◇ line with a
+   plain `Δ shown` tail (the Tab hint arrives with stage 2), header-hidden prefixes, copy
    sweep (old `●` meaning removed). Pure presentation; no behavior change.
 2. **Compare table unification**: normal anatomy + Δ column, marks visible, per-mode sort,
-   `D`, retire `>`/`<`.
+   `D`, retire `>`/`<`; the **Tab plain ↔ Δ toggle** with the E11 filter-bar precedence
+   (teach-flashes use transitional copy naming today's keys).
 3. **Unified browser**: one window, O/B doors, live row, sections, two cursors, Enter/Esc
-   semantics; `%` relocation lands here (same commit as the `B` rebind).
-4. **Baseline stepping**: `{` `}`, E3–E7 rulings, teach-flashes.
+   semantics; `%` relocation lands here (same commit as the `B` rebind); `S` unbound and
+   every copy string naming `S` swept to `B`.
+4. **Baseline stepping**: `{` `}`, E3–E7 rulings, final teach-flash and hint-line copy
+   (retires all remaining transitional copy).
 5. **Scan boundary**: preview never diffs, paused tail, completion flash, E8–E10.
-6. **Docs + help + man page.**
+6. **Docs**: help restructure, README, FORK.md, configuration.md (no new keys — say so),
+   `gdu.1.md` + `make gdu.1`; fold surviving rationale into DESIGN.md and CLAUDE.md,
+   append the §5 divergence log to UPSTREAM.md's decision log, then delete this document.
 
 ## 10. Future work (explicitly out of v1)
 
@@ -413,3 +425,64 @@ the old history hint, the picker titles, and the help screen's History section.
 - **`-f` files as baseline sources** in the browser.
 - **Config surface**: none added in v1; revisit only if real usage asks for defaults (e.g.
   auto-compare-on-open).
+
+## 11. Delegating the stages
+
+One clean agent session per stage, in order, following the delegation convention in
+[UPSTREAM.md](UPSTREAM.md). Standing rules for every stage, in addition to that document's
+two (confirm derived facts before anything irreversible; report what was verified, not just
+what was changed):
+
+- Read this document fully before touching code, plus CLAUDE.md's TUI sections. If this
+  document is missing from your base, stop and say so — the base is behind.
+- Base on the default branch with all prior stages merged; do not start a stage while the
+  previous one is unmerged.
+- Honor the §9 copy-staging rule: never advertise a key that doesn't exist yet.
+- Update any CLAUDE.md claims your stage invalidates, in the same change.
+- Verify with `make lint` and `make test`, and drive every TUI-visible change end-to-end
+  through the pty harness (the `verify` skill) — this class of change is where
+  `QueueUpdateDraw` deadlocks and layout regressions hide.
+
+Canonical requests (adjust freely):
+
+- **Stage 1** — *"Implement stage 1 (header + grammar) of docs/history-ux-plan.md: the ●/◇
+  role glyphs with their `--no-unicode`/`--no-color` fallbacks, the always-on Viewing line
+  whenever a baseline is set (fixes finding F2), the ◇ line with its `Δ shown` tail, the
+  header-hidden prefixes, and the sweep removing the old ●=active-baseline meaning from the
+  picker. Presentation only — no new keys, no behavior change; keep today's key names in
+  all hints. Verify the header states through the pty harness (plain live, snapshot view,
+  baseline set, header-hidden), then push and hand back for review."*
+- **Stage 2** — *"Implement stage 2 (compare table unification) of docs/history-ux-plan.md
+  §4.2: compare view = the normal table anatomy plus an appended Δ column (bar stays
+  usage-scaled, removed rows inline), marks visible, per-mode sort memory defaulting to Δ
+  desc, the `D` sort key, retire `>`/`<`, and Tab toggling plain ↔ Δ when a baseline is set
+  (rulings E11–E16; teach-flashes use transitional copy naming today's keys). Update the
+  help lines for `D` and `>`/`<`. Verify by pty: set a baseline, Tab both ways, sort in
+  both modes, mark and delete inside the compare view."*
+- **Stage 3** — *"Implement stage 3 (unified browser) of docs/history-ux-plan.md §4.3: one
+  browser replacing the S/O pickers — `O` opens with ● active, `B` with ◇ active (rebinding
+  `B` and moving the bar-alignment toggle to `%` in the same commit, including the mid-scan
+  preview key list and help), `S` unbound and all copy naming `S` swept; the pinned live
+  row wired to the existing go-live flow; covering and other-roots sections; two
+  always-visible cursors with Tab focus flip and `[` `]` `{` `}` cursor moves in-browser;
+  default-◇ pre-position; Enter applies, Esc discards; the `-f` startup chooser reseeded;
+  launcher `S` opening the browser row-scoped (§4.5). This is the largest stage — sequence
+  commits so each compiles and passes. Verify the browser flows by pty."*
+- **Stage 4** — *"Implement stage 4 (baseline stepping) of docs/history-ux-plan.md: `{`/`}`
+  step the baseline per §4.2 and rulings E3–E7 (`{` with none set = compare vs previous;
+  `}` onto ● clears; ● onto ◇ renders honest zero; coverage-loss auto-clears), with
+  baseline loads off the event loop behind the loading page, reusing the covering-timeline
+  machinery. Land the final §7 teach-flash and hint-line copy, retiring all transitional
+  copy. Verify stepping and every E3–E7 ruling by pty."*
+- **Stage 5** — *"Implement stage 5 (scan boundary) of docs/history-ux-plan.md §4.4 and
+  rulings E8–E10: the mid-scan preview never renders Δ (fixes finding F6 — add a
+  regression test for baseline + `r` + Tab), the ◇ paused tail during scans with Δ
+  resuming on completion, the completion flash from manifest totals, and `{`/`}` on the
+  progress screen flashing only. Verify with a real scan through the pty harness,
+  including stepping into the past mid-scan."*
+- **Stage 6** — *"Finish the history UX plan with stage 6 (docs) per
+  docs/history-ux-plan.md §9: restructure the help History and Sort sections, update
+  README, FORK.md, configuration.md (no new config keys — say so), and gdu.1.md with
+  `make gdu.1`; audit every user-facing string against §7; fold the plan's surviving
+  rationale into docs/DESIGN.md and CLAUDE.md; append the §5 divergence log to
+  docs/UPSTREAM.md's decision log; then delete docs/history-ux-plan.md."*
