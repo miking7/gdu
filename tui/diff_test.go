@@ -96,7 +96,9 @@ func TestBaselineAsCreateUIOptionDoesNotPanic(t *testing.T) {
 	assert.Contains(t, ui.header.GetText(true), "● Viewing   live",
 		"and the Viewing slot naming what it is compared with")
 	assert.Equal(t, 2, ui.headerLines,
-		"the grid's header row is laid out at two lines even though the baseline predates it")
+		"the option-applied baseline records a two-line header even though it predates the widget")
+	// The grid actually laying that header row out at two lines is covered by
+	// TestBaselineHeaderRendersTwoGridRows (a field check can't see the clip).
 	assert.Contains(t, ui.header.GetText(true), "Esc clear")
 }
 

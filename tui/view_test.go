@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -280,6 +281,7 @@ func TestHeaderStates(t *testing.T) {
 	assert.Contains(t, lines[0], "● Viewing   snapshot")
 	assert.NotContains(t, lines[0], "Esc return", "one Esc promise on screen at a time")
 	assert.Contains(t, lines[1], "◇ Baseline  "+ts1.Local().Format(headerTimeLayout))
+	assert.Contains(t, lines[1], "ago)", "the Baseline line carries the snapshot's relative age")
 	assert.Contains(t, lines[1], "Δ shown")
 	assert.Contains(t, lines[1], "> < sort · Esc clear")
 	assert.Equal(t, 2, ui.headerLines)
@@ -293,6 +295,7 @@ func TestHeaderStates(t *testing.T) {
 	lines = strings.Split(ui.header.GetText(false), "\n")
 	require.Len(t, lines, 2, "a set Baseline always names what it is compared with")
 	assert.Contains(t, lines[0], "● Viewing   live /root")
+	assert.Contains(t, lines[0], "— scanned ", "the live line states when the tree was scanned")
 	assert.NotContains(t, lines[0], "read-only", "the live tree is not read-only")
 	assert.Contains(t, lines[1], "◇ Baseline  ")
 	assert.Equal(t, 2, ui.headerLines)
@@ -331,6 +334,93 @@ func TestHeaderGlyphsFallBackToASCII(t *testing.T) {
 	prefix := hidden.dirLabelPrefix()
 	assert.Contains(t, prefix, "[* live]")
 	assert.Contains(t, prefix, "[o "+ts1.Local().Format(headerDateLayout)+" Δ]")
+	assert.NotContains(t, prefix, "●", "the prefix must be free of unicode glyphs under --no-unicode")
+	assert.NotContains(t, prefix, "◇")
+}
+
+// simRow reads screen row y from the simulation screen as a plain string.
+func simRow(sim tcell.SimulationScreen, y int) string {
+	cells, width, _ := sim.GetContents()
+	var b strings.Builder
+	for x := 0; x < width; x++ {
+		if r := cells[y*width+x].Runes; len(r) > 0 {
+			b.WriteRune(r[0])
+		} else {
+			b.WriteByte(' ')
+		}
+	}
+	return b.String()
+}
+
+// TestBaselineHeaderRendersTwoGridRows guards the createGrid header-row sizing
+// by actually drawing the grid: a --baseline applied as a CreateUI option makes
+// the header two lines before the grid is built, so createGrid must size the
+// header row from ui.headerLines (not a literal 1) or the Baseline line is
+// clipped. A field assertion can't catch this — headerLines is 2 regardless of
+// the grid — so this renders and checks the second header line lands on screen
+// row 1. Reverting createGrid to SetRows(1, 1, 0, 1) fails here.
+func TestBaselineHeaderRendersTwoGridRows(t *testing.T) {
+	const width, height = 120, 20
+	app, sim := testapp.CreateTestAppWithSimScreen(width, height)
+	t.Cleanup(func() { sim.Fini() })
+
+	b := analyze.BuildBaseline(liveRootTree(), "/root", 0)
+	ui := CreateUI(app, sim, &bytes.Buffer{}, false, false, false, false,
+		func(u *UI) { u.SetBaseline(b, snapAt(ts1)) })
+	require.Equal(t, 2, ui.headerLines, "the option put the header at two lines before createGrid ran")
+
+	live := &view{tree: liveRootTree(), topPath: "/root", scannedAt: ts2}
+	ui.liveView = live
+	ui.applyView(live, "/root", "") // re-renders; setHeaderHeight(2) short-circuits, leaving the grid as createGrid built it
+
+	ui.grid.SetRect(0, 0, width, height)
+	ui.grid.Draw(sim)
+	sim.Show()
+
+	assert.Contains(t, simRow(sim, 0), "Viewing", "the Viewing line renders on grid row 0")
+	assert.Contains(t, simRow(sim, 1), "Baseline",
+		"the Baseline line must render on grid row 1 — proves the header row is two lines tall")
+}
+
+// TestHeaderNoticeCollapsesToOneLine: a transient header notice is one line, so
+// it must not leave a blank second row under it when a baseline has made the
+// resting header two lines. The height is restored when the notice clears.
+func TestHeaderNoticeCollapsesToOneLine(t *testing.T) {
+	ui := newLiveUI(t, t.TempDir())
+	ui.SetBaseline(analyze.BuildBaseline(liveRootTree(), "/root", 0), snapAt(ts1))
+	require.Equal(t, 2, ui.headerLines, "live + baseline is a two-line header")
+
+	ui.headerNoticeNow("Deletion is disabled!")
+	assert.Equal(t, 1, ui.headerLines, "the one-line notice collapses the header row")
+	assert.Equal(t, " Deletion is disabled!", ui.header.GetText(false))
+
+	// Simulate the notice expiring: updateHeader restores the two-line header.
+	ui.headerNotice = ""
+	ui.updateHeader()
+	assert.Equal(t, 2, ui.headerLines, "clearing the notice restores the baseline's two lines")
+}
+
+// TestHumanAge pins the relative-age units shown on the Baseline line and in
+// the picker: sub-minute floors to "1 min", negative (clock skew) is clamped,
+// and the min → h → days boundaries land where the copy expects.
+func TestHumanAge(t *testing.T) {
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{-time.Second, "1 min"},
+		{0, "1 min"},
+		{30 * time.Second, "1 min"},
+		{5 * time.Minute, "5 min"},
+		{59 * time.Minute, "59 min"},
+		{90 * time.Minute, "1 h"},
+		{47 * time.Hour, "47 h"},
+		{48 * time.Hour, "2 days"},
+		{7 * 24 * time.Hour, "7 days"},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, humanAge(c.d), "humanAge(%s)", c.d)
+	}
 }
 
 // TestHeaderStartingSnapshotViewHasNoEscPromise: when the session was launched

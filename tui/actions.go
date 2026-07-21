@@ -371,6 +371,11 @@ func (ui *UI) headerNoticeNow(text string) {
 	noticeText := " " + text
 	ui.headerNotice = noticeText
 	ui.header.SetText(noticeText)
+	// A notice is a single line. When a baseline is set the resting header is
+	// two lines tall, so collapse the grid row to one for the notice's lifetime;
+	// updateHeader on expiry restores the real height. Without this the second
+	// row renders blank underneath the notice.
+	ui.setHeaderHeight(1)
 
 	go func() {
 		time.Sleep(2 * time.Second)

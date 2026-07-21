@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/dundee/gdu/v5/internal/common"
 	"github.com/dundee/gdu/v5/internal/testanalyze"
+	"github.com/dundee/gdu/v5/internal/testapp"
 	"github.com/dundee/gdu/v5/internal/testdev"
 	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
@@ -128,4 +130,24 @@ func TestBaselinePickerMarksActiveBaseline(t *testing.T) {
 	assert.NotContains(t, table.GetCell(1, 0).Text, "◇", "other rows are not marked")
 	assert.NotContains(t, table.GetCell(2, 0).Text, "●",
 		"● now means the tree being viewed — never the baseline")
+}
+
+// TestBaselineMarkerGlyphAndColor pins the active-baseline marker: the hollow
+// Baseline glyph in the device-table blue (not the old amber size color), the
+// ASCII fallback under --no-unicode, and same-width padding on inactive rows.
+func TestBaselineMarkerGlyphAndColor(t *testing.T) {
+	app := testapp.CreateMockedApp(true)
+	sim := testapp.CreateSimScreen()
+	t.Cleanup(func() { sim.Fini() })
+	ui := CreateUI(app, sim, &bytes.Buffer{}, true, false, false, false) // colors on
+
+	active := ui.baselineMarker(true)
+	assert.Contains(t, active, "◇", "active marker uses the hollow Baseline glyph")
+	assert.Contains(t, active, deviceNameColor, "in the device-table blue")
+	assert.NotContains(t, active, deviceSizeColor, "not the old amber size color")
+	assert.Equal(t, "  ", ui.baselineMarker(false), "inactive rows pad to the marker width")
+
+	ui.UseOldSizeBar() // --no-unicode
+	assert.Contains(t, ui.baselineMarker(true), "o", "ASCII fallback keeps the hollow role")
+	assert.NotContains(t, ui.baselineMarker(true), "◇")
 }
