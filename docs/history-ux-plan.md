@@ -94,6 +94,10 @@ baseline; moving a browser cursor does not change what's applied until Enter.
 - `●` / `◇` as above. Near-neighbor check: `✦` (the "new item" delta marker) is solid,
   warm-colored, and appears only in the Δ column; `◇` appears only in header/picker margins.
   Different columns, different fill — acceptable, and now a checked decision.
+- `~` likewise appears twice with different meanings: the cloud-placeholder *item flag*
+  (leftmost flag column, from the macOS dataless feature) and the approx *delta marker*
+  (Δ column). Different columns; a dataless row in compare view legitimately shows both
+  (`~` flag + a `▼` shrink is honest: eviction did free disk). Checked, not accidental.
 - Colors must not collide with the diff triad (warm orange = grew, teal = shrank, violet =
   removed, amber = approx). Working choice: `●` default-bold, `◇` the device-table blue.
   Final call at implementation with a pty-harness screenshot.
@@ -408,7 +412,9 @@ moves; the full help restructure is stage 6's.
    every copy string naming `S` swept to `B`.
 4. **Baseline stepping**: `{` `}`, E3–E7 rulings, final teach-flash and hint-line copy
    (retires all remaining transitional copy).
-5. **Scan boundary**: preview never diffs, paused tail, completion flash, E8–E10.
+5. **Scan-time Tab rules**: preview never diffs, paused tail, completion flash, E8–E10.
+   (Not to be confused with the codebase's "scan boundary" — `applyScanBoundary`,
+   `scanboundary_test.go` — which is a scan's *mount* boundary and unrelated.)
 6. **Docs**: help restructure, README, FORK.md, configuration.md (no new keys — say so),
    `gdu.1.md` + `make gdu.1`; fold surviving rationale into DESIGN.md and CLAUDE.md,
    append the §5 divergence log to UPSTREAM.md's decision log, then delete this document.
@@ -435,8 +441,10 @@ what was changed):
 
 - Read this document fully before touching code, plus CLAUDE.md's TUI sections. If this
   document is missing from your base, stop and say so — the base is behind.
-- Base on the default branch with all prior stages merged; do not start a stage while the
-  previous one is unmerged.
+- Stage 1 bases on the plan branch `claude/ux-ui-consistency-review-lwp80j` (= master plus
+  this document) unless the plan has already merged to master; each later stage bases on
+  the previous stage's merged result. Do not start a stage while the previous one is
+  unmerged.
 - Honor the §9 copy-staging rule: never advertise a key that doesn't exist yet.
 - Update any CLAUDE.md claims your stage invalidates, in the same change.
 - Verify with `make lint` and `make test`, and drive every TUI-visible change end-to-end
@@ -474,12 +482,13 @@ Canonical requests (adjust freely):
   baseline loads off the event loop behind the loading page, reusing the covering-timeline
   machinery. Land the final §7 teach-flash and hint-line copy, retiring all transitional
   copy. Verify stepping and every E3–E7 ruling by pty."*
-- **Stage 5** — *"Implement stage 5 (scan boundary) of docs/history-ux-plan.md §4.4 and
-  rulings E8–E10: the mid-scan preview never renders Δ (fixes finding F6 — add a
+- **Stage 5** — *"Implement stage 5 (scan-time Tab rules) of docs/history-ux-plan.md §4.4
+  and rulings E8–E10: the mid-scan preview never renders Δ (fixes finding F6 — add a
   regression test for baseline + `r` + Tab), the ◇ paused tail during scans with Δ
   resuming on completion, the completion flash from manifest totals, and `{`/`}` on the
-  progress screen flashing only. Verify with a real scan through the pty harness,
-  including stepping into the past mid-scan."*
+  progress screen flashing only. Note the codebase's 'scan boundary' (`applyScanBoundary`)
+  is a scan's mount boundary — unrelated to this stage. Verify with a real scan through
+  the pty harness, including stepping into the past mid-scan."*
 - **Stage 6** — *"Finish the history UX plan with stage 6 (docs) per
   docs/history-ux-plan.md §9: restructure the help History and Sort sections, update
   README, FORK.md, configuration.md (no new config keys — say so), and gdu.1.md with
