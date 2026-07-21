@@ -35,6 +35,14 @@ func (ui *UI) showFile() *tview.TextView {
 		return nil
 	}
 
+	// '~' marks a file whose contents were evicted to a cloud provider. Opening
+	// it would make the kernel download it, which is exactly what the user did
+	// not ask for by pressing a key that only reads.
+	if selectedFile.GetFlag() == '~' {
+		ui.headerNoticeNow("Cloud placeholder — not downloaded")
+		return nil
+	}
+
 	path := selectedFile.GetPath()
 	f, err := os.Open(path)
 	if err != nil {

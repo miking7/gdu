@@ -29,6 +29,10 @@ func setPlatformSpecificAttrs(file *File, f os.FileInfo) {
 			file.Mli = stat.Ino
 		}
 	}
+
+	if fileIsDataless(f) {
+		file.Flag = datalessFlag
+	}
 }
 
 func setDirPlatformSpecificAttrs(dir *Dir, path string) {

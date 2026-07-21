@@ -13,6 +13,11 @@ import (
 
 var pathSep = string(os.PathSeparator)
 
+// emptyDirSize is the apparent size reported for a directory with nothing to
+// count — one that is genuinely empty, or a cloud placeholder gdu refuses to
+// enumerate. Neither holds data blocks, so the disk usage stays zero.
+const emptyDirSize = 512
+
 var _ common.Analyzer = (*TopDirAnalyzer)(nil)
 
 // TopDirAnalyzer implements Analyzer
@@ -49,9 +54,18 @@ func (a *TopDirAnalyzer) AnalyzeDir(
 
 	go a.UpdateProgress()
 
-	files, err := os.ReadDir(path)
-	if err != nil {
-		log.Print(err.Error())
+	// Checked before ReadDir: listing a cloud placeholder is what drags its
+	// whole subtree down from the provider, so a placeholder root stays a leaf.
+	var (
+		files    []os.DirEntry
+		err      error
+		dataless = dirIsDataless(path)
+	)
+	if !dataless {
+		files, err = os.ReadDir(path)
+		if err != nil {
+			log.Print(err.Error())
+		}
 	}
 
 	dir := SimpleDir{
@@ -63,8 +77,14 @@ func (a *TopDirAnalyzer) AnalyzeDir(
 		},
 		Files: make([]SimpleFile, 0, len(files)),
 	}
+	if dataless {
+		dir.Flag = datalessFlag
+	}
 
-	var topDirs []*TopDir
+	var (
+		topDirs []*TopDir
+		scanned int
+	)
 
 	for _, f := range files {
 		name := f.Name()
@@ -78,6 +98,16 @@ func (a *TopDirAnalyzer) AnalyzeDir(
 				Flag: ' ',
 			}
 			topDirs = append(topDirs, topDir)
+
+			// A cloud placeholder is reported like an empty directory and never
+			// descended into, so no scan goroutine is started for it.
+			if dirIsDataless(entryPath) {
+				topDir.Flag = datalessFlag
+				topDir.AddUsage(emptyDirSize, 0, 0)
+				continue
+			}
+
+			scanned++
 			go func(entryPath string) {
 				a.processSubDir(entryPath, topDir)
 				subDirChan <- struct{}{}
@@ -122,15 +152,21 @@ func (a *TopDirAnalyzer) AnalyzeDir(
 			usage, mli := getPlatformSpecificUsageAndMli(info)
 			file.Usage = usage
 
-			if mli > 0 {
+			// Hard-link accounting wins the flag column: it changes what the
+			// number means, while "evicted to the cloud" only explains why the
+			// disk usage is nil.
+			switch {
+			case mli > 0:
 				file.Flag = 'H'
+			case fileIsDataless(info):
+				file.Flag = datalessFlag
 			}
 
 			dir.Files = append(dir.Files, file)
 		}
 	}
 
-	for i := 0; i < len(topDirs); i++ {
+	for i := 0; i < scanned; i++ {
 		<-subDirChan
 	}
 
@@ -164,6 +200,15 @@ func (a *TopDirAnalyzer) processSubDir(path string, topDir *TopDir) {
 		totalCount int64
 		info       os.FileInfo
 	)
+
+	// Checked before ReadDir: listing a cloud placeholder is what drags its
+	// whole subtree down from the provider. It contributes what an empty
+	// directory does; the enclosing top-level dir keeps its own flag, because a
+	// placeholder somewhere below it does not make it one.
+	if dirIsDataless(path) {
+		topDir.AddUsage(emptyDirSize, 0, 0)
+		return
+	}
 
 	files, err := os.ReadDir(path)
 	if err != nil {
@@ -238,7 +283,7 @@ func (a *TopDirAnalyzer) processSubDir(path string, topDir *TopDir) {
 	}
 
 	if len(files) == 0 {
-		totalSize = 512
+		totalSize = emptyDirSize
 		totalUsage = 0
 	}
 

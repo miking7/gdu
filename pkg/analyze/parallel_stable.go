@@ -56,6 +56,12 @@ func (a *ParallelStableOrderAnalyzer) processDir(path string) *Dir {
 		dirCount  int
 	)
 
+	// Checked before ReadDir: listing a cloud placeholder is what drags its
+	// whole subtree down from the provider.
+	if dirIsDataless(path) {
+		return datalessDir(path)
+	}
+
 	a.wait.Add(1)
 
 	files, err := os.ReadDir(path)

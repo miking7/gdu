@@ -108,6 +108,13 @@ func addRow(dirs map[string]*analyze.Dir, row *Row) {
 		d := getOrCreateDir(dirs, row.Path)
 		d.Name = row.Name
 		d.Mtime = msToTime(row.Mtime)
+		// A directory's read-error flag is left to UpdateStats, which re-derives
+		// it from the children it can see. "Cloud placeholder" has no such
+		// evidence to rebuild from — the placeholder has no children by
+		// definition — so it is the one directory flag restored from the row.
+		if row.Dataless {
+			d.Flag = '~'
+		}
 		parent := getOrCreateDir(dirs, row.Parent)
 		d.Parent = parent
 		parent.AddFile(d)
@@ -144,6 +151,8 @@ func flagFromRow(row *Row) rune {
 		return '@'
 	case row.ReadError:
 		return '!'
+	case row.Dataless:
+		return '~'
 	default:
 		return ' '
 	}

@@ -1063,6 +1063,20 @@ func TestSqliteAnalyzerProgress(t *testing.T) {
 	analyzer.GetDone().Wait()
 }
 
+func TestSqliteAnalyzerSkipsDatalessDir(t *testing.T) {
+	root, _ := datalessFixture(t)
+
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	analyzer, err := CreateSqliteAnalyzer(dbPath)
+	assert.NoError(t, err)
+	defer analyzer.storage.Close()
+
+	dir := analyzer.AnalyzeDir(root, func(_, _ string) bool { return false }, func(_ string) bool { return false })
+	analyzer.GetDone().Wait()
+
+	assertDatalessLeaf(t, dir)
+}
+
 func BenchmarkSqliteAnalyzeDir(b *testing.B) {
 	fin := testdir.CreateTestDir()
 	defer fin()

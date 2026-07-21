@@ -5,9 +5,50 @@ import (
 	"compress/gzip"
 	"testing"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/ulikunitz/xz"
+
+	"github.com/dundee/gdu/v5/internal/testapp"
+	"github.com/dundee/gdu/v5/internal/testdir"
+	"github.com/dundee/gdu/v5/pkg/analyze"
+	"github.com/dundee/gdu/v5/pkg/fs"
 )
+
+// TestShowFileRefusesCloudPlaceholder covers the 'v' guard: a '~' file's bytes
+// live in a cloud provider, and opening it would make the kernel download them —
+// which is not what a key that only reads should do.
+func TestShowFileRefusesCloudPlaceholder(t *testing.T) {
+	fin := testdir.CreateTestDir()
+	defer fin()
+	simScreen := testapp.CreateSimScreen()
+	defer simScreen.Fini()
+
+	app := testapp.CreateMockedApp(true)
+	ui := CreateUI(app, simScreen, &bytes.Buffer{}, false, true, false, false)
+	ui.done = make(chan struct{})
+	require.NoError(t, ui.AnalyzePath("test_dir", nil))
+
+	<-ui.done // wait for analyzer
+
+	for _, f := range ui.app.(*testapp.MockedApp).GetUpdateDraws() {
+		f()
+	}
+
+	ui.table.Select(0, 0)
+	ui.keyPressed(tcell.NewEventKey(tcell.KeyRight, 'l', 0))
+	ui.table.Select(2, 0)
+
+	selected, ok := ui.table.GetCell(2, 0).GetReference().(fs.Item)
+	require.True(t, ok)
+	require.False(t, selected.IsDir())
+	selected.(*analyze.File).Flag = '~'
+
+	assert.Nil(t, ui.showFile())
+	assert.False(t, ui.pages.HasPage("file"), "a cloud placeholder must not be opened")
+	assert.Contains(t, ui.headerNotice, "Cloud placeholder")
+}
 
 func TestGetScannerForEmptyString(t *testing.T) {
 	r := bytes.NewReader([]byte{})

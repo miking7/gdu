@@ -1032,6 +1032,41 @@ func (a *SqliteAnalyzer) processFile(entryPath, name string, f os.DirEntry) (sta
 	}
 }
 
+// storeDatalessDir records a cloud placeholder directory as a childless leaf,
+// sized like any other empty directory in this store (4096 for the directory
+// itself), so the browsing UI shows the placeholder without the scan ever
+// enumerating it.
+func (a *SqliteAnalyzer) storeDatalessDir(path string, parentID *int64) *SqliteItem {
+	const dirOwnSize = 4096
+
+	var mtime time.Time
+	if info, err := os.Stat(path); err == nil {
+		mtime = info.ModTime()
+	}
+
+	name := filepath.Base(path)
+	id, err := a.insertItemLocked(parentID, name, true, dirOwnSize, dirOwnSize, mtime, 1, 0, datalessFlag)
+	if err != nil {
+		log.Print(err.Error())
+		return nil
+	}
+
+	a.progressCurrentItemName.Store(path)
+
+	return &SqliteItem{
+		storage:   a.storage,
+		id:        id,
+		parentID:  parentID,
+		name:      name,
+		isDir:     true,
+		size:      dirOwnSize,
+		usage:     dirOwnSize,
+		mtime:     mtime,
+		itemCount: 1,
+		flag:      datalessFlag,
+	}
+}
+
 // nolint:funlen
 func (a *SqliteAnalyzer) processDir(path string, parentID *int64) *SqliteItem {
 	// Start with 4096 for directory's own size/usage, matching Dir.UpdateStats behavior
@@ -1043,6 +1078,14 @@ func (a *SqliteAnalyzer) processDir(path string, parentID *int64) *SqliteItem {
 		subDirChan       = make(chan *SqliteItem)
 		dirCount   int
 	)
+
+	// Checked before ReadDir: listing a cloud placeholder is what drags its
+	// whole subtree down from the provider. Returning here also skips the
+	// concurrency slot and wait-group bookkeeping below, which the leaf has no
+	// children to need.
+	if dirIsDataless(path) {
+		return a.storeDatalessDir(path, parentID)
+	}
 
 	a.wait.Add(1)
 	defer a.wait.Done()

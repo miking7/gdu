@@ -223,6 +223,22 @@ flag with following meaning:
 
 * `e` Directory is empty.
 
+* `~` Cloud placeholder: the contents are not stored locally (macOS).
+
+### Cloud placeholders
+
+On macOS, files and folders that a provider has evicted to the cloud — iCloud Drive, Dropbox,
+Google Drive, OneDrive and anything else built on the same file-provider machinery — are marked
+`~`. Evicted *files* keep their real apparent size while occupying no disk blocks, so they are
+counted exactly as the disk sees them. Evicted *folders* are reported as placeholders and never
+descended into: listing one makes the kernel download its whole subtree from the provider, which is
+slow, chatty and quietly fills the disk that gdu is being asked to measure. This applies to every
+provider and every user, needs no configuration, and there is no flag to turn it off. Press `v` on
+a placeholder file and gdu says so rather than downloading it.
+
+To hide cloud trees entirely rather than showing them as placeholders, exclude them with
+`--ignore-dirs-pattern`.
+
 ## Configuration file
 
 Gdu can read (and write) YAML configuration file.
