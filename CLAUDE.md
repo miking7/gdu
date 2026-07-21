@@ -91,6 +91,31 @@ tree mid-scan; the TUI reaches it through an optional interface assertion, so th
 interface stays untouched. Reading that live tree is race-free because `Dir.AddFile` now takes the
 write lock and `Dir.updateStats` snapshots the file list under the read lock.
 
+### Dataless (cloud placeholder) scanning
+
+macOS marks files and directories whose contents a provider has evicted to the cloud with
+`SF_DATALESS` in `st_flags`. **Every analyzer tests `dirIsDataless(path)` immediately before its
+`os.ReadDir`** — the listing is the act that faults the whole subtree back through fileproviderd —
+and substitutes `datalessDir(path)`: a childless leaf carrying `Flag: '~'` and `ItemCount: 1`
+([pkg/analyze/dataless.go](pkg/analyze/dataless.go)). Files take the same flag from the
+`os.FileInfo` the caller already holds, at **both** file paths — `setPlatformSpecificAttrs`
+([dir_unix.go](pkg/analyze/dir_unix.go)) and `TopDirAnalyzer`'s own
+([parallel_top_dir.go](pkg/analyze/parallel_top_dir.go), which doesn't call it, exactly as it
+already handles `'H'`) — so `gdu -npc <clouddir>` shows the flag too. Evicted files are still
+*counted*: they hold ~no blocks while their apparent size is real, so the totals were always honest
+and the flag is informational there. **There is deliberately no opt-out knob** — a disk usage tool
+must never measure a cloud by materializing it; users who want the trees gone entirely use `-I`.
+The bit test lives in darwin-only files ([dataless_darwin.go](pkg/analyze/dataless_darwin.go) /
+[dataless_other.go](pkg/analyze/dataless_other.go)) and must never move into `dir_unix.go`, which is
+shared with netbsd/freebsd where `0x40000000` means something unrelated. Both checks sit behind
+package-level `var` seams because the kernel owns the attribute and userspace cannot set it — no
+fixture can be genuinely dataless, which is what makes the per-analyzer tests possible. `'~'`
+renders everywhere for free through `GetFlag`; `v` on a placeholder reports it instead of opening
+(an open would download it); Parquet carries it in an optional `dataless` column (additive — no
+format bump; old files read as false) and it is the one *directory* flag restored on read, because
+`UpdateStats` re-derives read errors from children and a placeholder has none. JSON export follows
+ncdu's format, which has no field for it, so the flag is lost there.
+
 ## Parquet snapshots
 
 gdu can export/import scans as Apache Parquet and auto-archive them for trend analysis. Design notes
@@ -318,14 +343,13 @@ gdu can export/import scans as Apache Parquet and auto-archive them for trend an
   `// Name ...` comment style.
 - **Comments are self-contained — never point code at a document.** Planning docs and their
   section/decision numbering are transient; code outlives the prose written about it. A comment that
-  says *see §5.4* rots the moment the doc is rewritten, and dies outright when it's deleted (the
-  fork's development-era plans are gone — they survive only at tag `archive/pre-squash`). So state
-  the reasoning **in place**, at whatever length the decision deserves, and don't cite
-  [docs/DESIGN.md](docs/DESIGN.md) either: it is a living document, not an immutable ADR. The only
-  link targets allowed in code are **durable and externally owned** — an upstream issue, an RFC, a
-  CVE. Prose may cross-reference prose freely (DESIGN.md ↔ [FORK.md](FORK.md) ↔ this file); the
-  dependency just never points backwards from code. Deep archaeology is what `git log` and the
-  archive tags are for.
+  says *see §5.4* rots the moment the doc is rewritten, and dies outright when it's deleted — and the
+  fork's development-era plan documents are gone. So state the reasoning **in place**, at whatever
+  length the decision deserves, and don't cite [docs/DESIGN.md](docs/DESIGN.md) either: it is a
+  living document, not an immutable ADR. The only link targets allowed in code are **durable and
+  externally owned** — an upstream issue, an RFC, a CVE. Prose may cross-reference prose freely
+  (DESIGN.md ↔ [FORK.md](FORK.md) ↔ this file); the dependency just never points backwards from
+  code. Deep archaeology is what `git log` is for.
 
 ## Testing conventions
 

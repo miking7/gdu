@@ -71,6 +71,17 @@ Supports both absolute and relative paths.
 \f[B]\-I\f[R], \f[B]\-\-ignore\-dirs\-pattern\f[R] Path patterns to
 ignore (separated by comma).
 Supports both absolute and relative path patterns.
+The patterns are Go regular expressions, not shell globs: a glob such as
+\f[CR]*/Library/CloudStorage\f[R] is rejected at startup, and
+\f[CR].*\f[R] is what a glob\[cq]s \f[CR]*\f[R] should become.
+Only the first pattern is anchored, and only at the start:
+\f[CR]/home/me/.cache\f[R] also excludes
+\f[CR]/home/me/.cache\-old\f[R], and later patterns can match anywhere
+in the path.
+Write \f[CR]\[ha]\f[R]\&...\f[CR]$\f[R] to mean exactly one directory.
+To hide the macOS cloud folders (which are otherwise scanned, showing
+their placeholders as \f[B]\[ti]\f[R] items):
+\f[CR]\-I \[aq]\[ha](/System/Volumes/Data)?/Users/[\[ha]/]+/Library/(CloudStorage|Mobile Documents)$\[aq]\f[R]
 .PP
 \f[B]\-X\f[R], \f[B]\-\-ignore\-from\f[R] Read path patterns to ignore
 from file.
@@ -104,7 +115,18 @@ logfile
 output
 .PP
 \f[B]\-x\f[R], \f[B]\-\-no\-cross\f[R][=false] Do not cross filesystem
-boundaries
+boundaries: the mount points nested under the scan root are left out of
+the scan entirely.
+The boundary is resolved for each scan root, so this applies to a folder
+or disk chosen in the launcher, not only to the directory gdu was
+started in.
+It also applies unasked when the root is a whole disk (chosen as a
+disk), and when the root is \f[B]/\f[R] on macOS \[em] there firmlinks
+splice the data volume\[cq]s \f[B]/Users\f[R], \f[B]/Applications\f[R],
+\f[B]/Library\f[R] and \f[B]/private\f[R] into the root hierarchy, and
+both spellings of a file report the same device and the same inode, so
+nothing but skipping the data volume\[cq]s mount point stops a scan of
+\f[B]/\f[R] from counting the machine twice.
 .PP
 \f[B]\-H\f[R], \f[B]\-\-no\-hidden\f[R][=false] Ignore hidden
 directories (beginning with dot)

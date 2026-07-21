@@ -12,10 +12,10 @@ upstream. It is neither a feature reference nor a build guide:
 - [FORK.md](../FORK.md) — user-facing overview: journeys, vocabulary, flag tables, the snapshot schema.
 - [CLAUDE.md](../CLAUDE.md) — how the code is built and changed: architecture, conventions, gotchas.
 - [scheduling.md](scheduling.md) — operating scheduled scans (cron / systemd / launchd, macOS Full Disk Access).
-- **This file** — the *why*, plus the vetted future-work list (§11).
+- **This file** — the *why*, plus the vetted future-work list (§10).
 
-It condenses the development-era plan documents; the full phase-by-phase history survives in the
-pre-squash git history (tag `archive/pre-squash`).
+It condenses the fork's development-era plan documents, which no longer exist: what was worth
+keeping is here, and everything else is in `git log`.
 
 ## 1. The founding constraint: pure Go, no cgo
 
@@ -180,7 +180,7 @@ compaction.
 Daily snapshots accrete files; `gdu snapshots compact` merges each **closed** local-time month —
 grouped by `(host, scan_root, month)` — into one
 `monthly_<yyyy-mm>_<rootslug>[_<hostslug>].parquet`. Compaction is **lossless repacking**: every
-snapshot survives row-for-row (lossy retention is future work, §11.3, and stays a separate verb).
+snapshot survives row-for-row (lossy retention is future work, §10.3, and stays a separate verb).
 
 - **Sort order `(path, scan_ts)` — locked.** Each path's rows across the month sit adjacent, so
   dictionary/RLE on `path` plus near-identical sizes across scans compress superbly — the measured
@@ -278,7 +278,7 @@ Whole-disk scans usually need root, but the artifacts must belong to the human.
   deliberate `/` scan.
 - **Deliberate boundary**: elevation is offered at the launcher only. Re-offering from the
   post-scan results view ("couldn't read N folders — restart elevated?") and carrying the selected
-  root through the restart were designed and consciously deferred (§11.2).
+  root through the restart were designed and consciously deferred (§10.2).
 
 ## 7. CLI surface & vocabulary
 
@@ -435,8 +435,8 @@ identity). The latter two are expected to stay fork-only.
 Everything below is **designed but not built**. All other ideas that came up during development —
 free-space/mount-capacity tracking, a scriptable `snapshots diff` / `--json` listing (SQL over the
 open archive covers both, §1), growth sparklines and history charts, ordinal selectors,
-covering-root auto-descend, assorted internal-polish advisories — were **dropped, not deferred**;
-consult the pre-squash history tag if archaeology is ever needed.
+covering-root auto-descend, assorted internal-polish advisories — were **dropped, not deferred**.
+They are not written down anywhere else; if one matters again it gets designed again.
 
 ### 10.1 Two-stage disk scan — *planned next; very likely*
 
@@ -513,3 +513,21 @@ newest-in-bucket wins, `--dry-run` as the culturally expected first step. Record
 designed: **progressive re-thresholding** (coarsen old snapshots, e.g. 10 M → 100 M, instead of
 deleting — a row transform in the same engine) and **yearly compaction** (the same engine with a
 period parameter).
+
+### 10.4 `gdu snapshots rm` — *small; wanted*
+
+The archive can be appended to and merged, never subtracted from: nothing removes a single snapshot.
+Bad scans happen. A July 2026 launcher scan of `/` recorded 1.6 TiB on an 820 GiB machine, because
+the TUI derived its nested-mount ignores from the display-filtered device list and so descended into
+Time Machine's local-snapshot mounts; the scanning defect is fixed, but disposing of the artifact
+meant deleting the whole file, which worked only because the month was still open and that file held
+exactly one snapshot. Once a scan has been folded into a compacted monthly there is no way out at
+all, and one wrong number distorts every timeline step and growth diff drawn through it.
+
+**Shape.** `gdu snapshots rm <selector>`, naming snapshots the way the rest of the CLI already does
+(a `--snapshot`-style timestamp or prefix, scoped by root), `--dry-run` as the expected first step,
+and compaction's write-tmp → verify → atomic-rename → delete-source ordering unchanged: for a file
+holding one snapshot the operation is a delete, for a monthly it is a rewrite of the survivors —
+which is precisely the snapshot-set filter §10.3 already parks in the merge engine. Worth building
+before pruning: same seam, hand-picked survivor set instead of a policy-derived one, and it is the
+one needed the day a scan goes wrong rather than the day the archive gets big.

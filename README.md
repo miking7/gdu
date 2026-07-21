@@ -208,6 +208,24 @@ automatically.
 
 Hard links are counted only once.
 
+## Mount points
+
+gdu leaves the mount points nested under the scan root out of the scan when:
+
+* you pass `-x` / `--no-cross`;
+* you scan a whole disk — picked as a disk, in the launcher or in the `-d` device table;
+* you scan `/` on macOS.
+
+The boundary is worked out for each scan root, so `--no-cross` applies to whatever you pick in the
+launcher, not only to the directory gdu was started in.
+
+The macOS case is not optional. Firmlinks splice the data volume's `/Users`, `/Applications`,
+`/Library` and `/private` into the root hierarchy, and both spellings of a file report the same
+device and the same inode — so unless the data volume's mount point is skipped, a scan of `/` counts
+the machine twice. Skipping nested mounts also keeps Time Machine's local snapshots, which appear
+and disappear under `/Volumes/com.apple.TimeMachine.localsnapshots` while a scan is running, out of
+the total.
+
 ## File flags
 
 Files and directories may be prefixed by a one-character
@@ -236,8 +254,15 @@ slow, chatty and quietly fills the disk that gdu is being asked to measure. This
 provider and every user, needs no configuration, and there is no flag to turn it off. Press `v` on
 a placeholder file and gdu says so rather than downloading it.
 
-To hide cloud trees entirely rather than showing them as placeholders, exclude them with
-`--ignore-dirs-pattern`.
+To hide cloud trees entirely rather than showing them as placeholders, exclude them with `-I` /
+`--ignore-dirs-pattern`, which takes Go regular expressions — not shell globs:
+
+```
+gdu -I '^(/System/Volumes/Data)?/Users/[^/]+/Library/(CloudStorage|Mobile Documents)$' /
+```
+
+See [`ignore-dir-patterns`](configuration.md#ignore-dir-patterns) for how that pattern is put
+together and why a glob like `*/Library/CloudStorage` is a startup error.
 
 ## Configuration file
 
@@ -246,6 +271,10 @@ Gdu can read (and write) YAML configuration file.
 `$HOME/.config/gdu/gdu.yaml` and `$HOME/.gdu.yaml` are checked for the presence of the config file by default.
 
 See the [full list of all configuration options](configuration.md).
+
+There is exactly one setting worth recommending — `mouse: true`. Everything else is a matter of
+taste: gdu's defaults already skip cloud placeholders and already keep a macOS `/` scan from
+counting the machine twice, so neither needs a config entry.
 
 ### Examples
 
