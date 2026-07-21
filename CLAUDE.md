@@ -162,7 +162,14 @@ gdu can export/import scans as Apache Parquet and auto-archive them for trend an
   covering-snapshot timeline ([tui/timeline.go](tui/timeline.go); pinned to one root per walk,
   live is the newest point, the just-saved snapshot *folds* into it); `O` opens any snapshot;
   `Esc` is layered (modal → clear baseline → return view) and **never scans**. The two-slot header
-  lives in [tui/header.go](tui/header.go). **Recording policy**: only completed scans of a
+  lives in [tui/header.go](tui/header.go): the roles carry **glyphs** — `●` Viewing (solid: the tree
+  you stand in), `◇` Baseline (hollow: the reference you compare against), ASCII `*`/`o` under
+  `--no-unicode` (same `useOldSizeBar` flag as the size bar). One shape means one role everywhere,
+  including the picker's active-baseline marker; the header stays a single-style band with no color
+  tags, because the shapes are what must survive `--no-color` and its copy is full of literal
+  bracket key names the tag parser would otherwise eat. **A set Baseline always renders both
+  lines**, live or not — a comparison must name both sides — and `dirLabelPrefix` carries the same
+  pair (`[● live] [◇ 2026-07-14 Δ]`) when `header.hidden`. **Recording policy**: only completed scans of a
   deliberately chosen root save (`scanOpts.transient` marks `r`-refreshes and spot-rescans, which
   never save). **Quit confirmation is unified and snapshot-aware** (`shouldConfirmQuit` in the
   `quitApp` chain, gated by the `no-confirm-quit` flag): quitting confirms only when work is

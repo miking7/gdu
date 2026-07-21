@@ -124,6 +124,8 @@ func TestBaselinePickerMarksActiveBaseline(t *testing.T) {
 	table, _ := ui.buildBaselinePickerForTest(covering)
 	selRow, _ := table.GetSelection()
 	assert.Equal(t, 2, selRow, "reopening S pre-selects the active baseline's row")
-	assert.Contains(t, table.GetCell(2, 0).Text, "●", "the active baseline row is marked")
-	assert.NotContains(t, table.GetCell(1, 0).Text, "●", "other rows are not marked")
+	assert.Contains(t, table.GetCell(2, 0).Text, "◇", "the active baseline row carries the Baseline glyph")
+	assert.NotContains(t, table.GetCell(1, 0).Text, "◇", "other rows are not marked")
+	assert.NotContains(t, table.GetCell(2, 0).Text, "●",
+		"● now means the tree being viewed — never the baseline")
 }

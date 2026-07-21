@@ -336,7 +336,9 @@ func (ui *UI) createGrid() {
 			AddItem(ui.table, 1, 0, 1, 1, 0, 0, true).
 			AddItem(ui.footer, 2, 0, 1, 1, 0, 0, false)
 	} else {
-		ui.grid = tview.NewGrid().SetRows(1, 1, 0, 1).SetColumns(0)
+		// headerLines, not a literal 1: a --baseline applied during CreateUI
+		// already asked for a two-line header before this grid existed.
+		ui.grid = tview.NewGrid().SetRows(ui.headerLines, 1, 0, 1).SetColumns(0)
 		ui.grid.AddItem(ui.header, 0, 0, 1, 1, 0, 0, false).
 			AddItem(ui.currentDirLabel, 1, 0, 1, 1, 0, 0, false).
 			AddItem(ui.table, 2, 0, 1, 1, 0, 0, true).

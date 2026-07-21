@@ -401,21 +401,18 @@ func (ui *UI) pickerWhenCell(l *report.SnapshotListing, active bool) string {
 	return ui.baselineMarker(active) + when + "  " + age
 }
 
-// baselineMarker returns a picker row's leading marker: a filled dot on the
-// active baseline row, else blank padding of the same width so columns line up.
-// The glyph falls back to ASCII '*' under --no-unicode.
+// baselineMarker returns a picker row's leading marker: the hollow Baseline
+// glyph on the row currently set as Baseline, else blank padding of the same
+// width so columns line up. The glyph is the same one the header's Baseline
+// line carries, so one shape means one role everywhere.
 func (ui *UI) baselineMarker(active bool) string {
 	if !active {
 		return "  "
 	}
-	glyph := "●"
-	if ui.useOldSizeBar { // --no-unicode
-		glyph = "*"
-	}
 	if ui.UseColors {
-		return "[" + deviceSizeColor + "::b]" + glyph + "[-:-:-] "
+		return "[" + deviceNameColor + "::b]" + ui.baselineGlyph() + "[-:-:-] "
 	}
-	return glyph + " "
+	return ui.baselineGlyph() + " "
 }
 
 // pickerSizeCell renders a size in the device-table amber (plain without colors).

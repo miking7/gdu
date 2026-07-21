@@ -265,9 +265,9 @@ func TestHeaderStates(t *testing.T) {
 	// Snapshot View: the Viewing line, read-only, with the innermost Esc hint.
 	ui.applyView(snapshotViewAt(ts2), "/root", "")
 	header := ui.header.GetText(false)
-	assert.Contains(t, header, "Viewing  snapshot "+ts2.Local().Format(headerTimeLayout))
+	assert.Contains(t, header, "● Viewing   snapshot "+ts2.Local().Format(headerTimeLayout))
 	assert.Contains(t, header, "· read-only")
-	assert.Contains(t, header, "[ older · ] newer")
+	assert.Contains(t, header, "[ ] step")
 	assert.Contains(t, header, "Esc return")
 	assert.Equal(t, 1, ui.headerLines)
 
@@ -277,28 +277,60 @@ func TestHeaderStates(t *testing.T) {
 	header = ui.header.GetText(false)
 	lines := strings.Split(header, "\n")
 	require.Len(t, lines, 2, "two slots → two header lines")
-	assert.Contains(t, lines[0], "Viewing  snapshot")
+	assert.Contains(t, lines[0], "● Viewing   snapshot")
 	assert.NotContains(t, lines[0], "Esc return", "one Esc promise on screen at a time")
-	assert.Contains(t, lines[1], "Baseline snapshot "+ts1.Local().Format(headerTimeLayout))
+	assert.Contains(t, lines[1], "◇ Baseline  "+ts1.Local().Format(headerTimeLayout))
 	assert.Contains(t, lines[1], "Δ shown")
 	assert.Contains(t, lines[1], "> < sort · Esc clear")
 	assert.Equal(t, 2, ui.headerLines)
 
-	// Live + Baseline: the Baseline line only.
+	// Live + Baseline: the Viewing line comes back so the screen states both
+	// sides of the comparison, not just the one being compared against.
 	ui.clearBaseline()
 	pressEsc(ui) // return to live
 	require.True(t, ui.viewIsLive())
 	ui.SetBaseline(analyze.BuildBaseline(liveRootTree(), "/root", 0), snapAt(ts1))
-	header = ui.header.GetText(false)
-	assert.NotContains(t, header, "Viewing")
-	assert.Contains(t, header, "Baseline snapshot")
-	assert.Equal(t, 1, ui.headerLines)
+	lines = strings.Split(ui.header.GetText(false), "\n")
+	require.Len(t, lines, 2, "a set Baseline always names what it is compared with")
+	assert.Contains(t, lines[0], "● Viewing   live /root")
+	assert.NotContains(t, lines[0], "read-only", "the live tree is not read-only")
+	assert.Contains(t, lines[1], "◇ Baseline  ")
+	assert.Equal(t, 2, ui.headerLines)
 	ui.clearBaseline()
+
+	// Baseline cleared: back to the one-line hint, no role glyphs left over.
+	assert.Equal(t, historyHint, ui.header.GetText(false))
+	assert.Equal(t, 1, ui.headerLines)
 
 	// An import View names its source.
 	imp := &view{tree: liveRootTree(), topPath: "/root", importLabel: "export.json"}
 	ui.applyView(imp, "/root", "")
-	assert.Contains(t, ui.header.GetText(false), "import export.json · read-only")
+	assert.Contains(t, ui.header.GetText(false), "● Viewing   import export.json · read-only")
+}
+
+// TestHeaderGlyphsFallBackToASCII: --no-unicode must lose no state. The role
+// glyphs are the only thing distinguishing the two header lines under
+// --no-color, so they need an ASCII form that stays solid-vs-hollow.
+func TestHeaderGlyphsFallBackToASCII(t *testing.T) {
+	ui := newLiveUI(t, t.TempDir())
+	ui.UseOldSizeBar()
+	ui.SetBaseline(analyze.BuildBaseline(liveRootTree(), "/root", 0), snapAt(ts1))
+
+	header := ui.header.GetText(false)
+	assert.Contains(t, header, "* Viewing   live /root")
+	assert.Contains(t, header, "o Baseline  ")
+	assert.NotContains(t, header, "●")
+	assert.NotContains(t, header, "◇")
+
+	// The header-hidden prefixes carry the same two glyphs.
+	hidden := newLiveUI(t, t.TempDir())
+	hidden.UseOldSizeBar()
+	hidden.SetHeaderHidden()
+	hidden.SetBaseline(analyze.BuildBaseline(liveRootTree(), "/root", 0), snapAt(ts1))
+
+	prefix := hidden.dirLabelPrefix()
+	assert.Contains(t, prefix, "[* live]")
+	assert.Contains(t, prefix, "[o "+ts1.Local().Format(headerDateLayout)+" Δ]")
 }
 
 // TestHeaderStartingSnapshotViewHasNoEscPromise: when the session was launched
@@ -331,9 +363,20 @@ func TestHeaderHiddenCompactPrefix(t *testing.T) {
 	ui.SetBaseline(analyze.BuildBaseline(liveRootTree(), "/root", 0), snapAt(ts1))
 
 	prefix := ui.dirLabelPrefix()
-	assert.Contains(t, prefix, "[snapshot "+ts2.Local().Format(headerDateLayout)+"]")
-	assert.Contains(t, prefix, "[Δ vs "+ts1.Local().Format(headerDateLayout)+"]")
-	assert.Contains(t, ui.currentDirLabel.GetText(false), "[snapshot ")
+	assert.Contains(t, prefix, "[● snapshot "+ts2.Local().Format(headerDateLayout)+"]")
+	assert.Contains(t, prefix, "[◇ "+ts1.Local().Format(headerDateLayout)+" Δ]")
+	assert.Contains(t, ui.currentDirLabel.GetText(false), "[● snapshot ")
+
+	// A live tree with a Baseline set shows both prefixes too — the
+	// compared-from side is never the missing one.
+	ui.applyView(&view{tree: liveRootTree(), topPath: "/root"}, "/root", "")
+	prefix = ui.dirLabelPrefix()
+	assert.Contains(t, prefix, "[● live]")
+	assert.Contains(t, prefix, "[◇ "+ts1.Local().Format(headerDateLayout)+" Δ]")
+
+	// Live with no Baseline is the default state: no prefix at all.
+	ui.clearBaseline()
+	assert.Empty(t, ui.dirLabelPrefix())
 }
 
 // TestReadAnalysisParquetIsReadOnlySnapshotView: a -f Parquet import resolves

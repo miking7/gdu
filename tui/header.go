@@ -18,18 +18,46 @@ const (
 	historyHint = " gdu ~ [ back in time · S compare · ? help "
 
 	// headerTimeLayout renders snapshot timestamps in header/footer copy
-	// ("2026-06-19 15:30"); headerDateLayout is the compact-prefix form.
-	headerTimeLayout = "2006-01-02 15:04"
-	headerDateLayout = "2006-01-02"
+	// ("2026-06-19 15:30"); headerDateLayout is the compact-prefix form and
+	// headerClockLayout the wall clock of a live scan ("14:02").
+	headerTimeLayout  = "2006-01-02 15:04"
+	headerDateLayout  = "2006-01-02"
+	headerClockLayout = "15:04"
 
 	// headerRootMaxLen caps the snapshot root shown on the Viewing line so the
 	// key hints stay on screen.
 	headerRootMaxLen = 40
 )
 
+// Role glyphs. Every screen shows a Viewing tree, optionally against a
+// Baseline; the two are asymmetric — Viewing is the room you stand in, Baseline
+// a reference overlay — so their markers are too: solid versus hollow. The
+// shapes alone carry the distinction, which is what keeps --no-color complete
+// and lets the header stay a single-style band. (Coloring them would mean
+// turning on tview's dynamic colors there, and the header's copy is full of
+// literal bracket key names — "[ ] step" — that the tag parser would then have
+// to be escaped around, for a distinction the shapes already make.)
+
+// viewingGlyph marks the tree being browsed. Falls back to ASCII under
+// --no-unicode, which the app carries on the same flag as the size bar.
+func (ui *UI) viewingGlyph() string {
+	if ui.useOldSizeBar {
+		return "*"
+	}
+	return "●"
+}
+
+// baselineGlyph marks the snapshot being compared against.
+func (ui *UI) baselineGlyph() string {
+	if ui.useOldSizeBar {
+		return "o"
+	}
+	return "◇"
+}
+
 // updateHeader renders the two-slot header for the current View/Baseline state
-// and grows the header row to two lines only while both slots are
-// active. Safe to call before the widgets exist (options run during CreateUI).
+// and grows the header row to two lines whenever a Baseline is set. Safe to
+// call before the widgets exist (options run during CreateUI).
 func (ui *UI) updateHeader() {
 	if ui.header == nil {
 		return
@@ -44,67 +72,96 @@ func (ui *UI) updateHeader() {
 	viewing := ui.viewingLine()
 	baseline := ui.baselineLine()
 
-	switch {
-	case viewing == "" && baseline == "":
-		if ui.coveringHint {
-			ui.header.SetText(historyHint)
-		} else {
-			ui.header.SetText(upstreamHint)
-		}
-	case viewing == "":
-		ui.header.SetText(baseline)
-	case baseline == "":
-		ui.header.SetText(viewing)
-	default:
-		ui.header.SetText(viewing + "\n" + baseline)
-	}
-
 	lines := 1
-	if viewing != "" && baseline != "" {
+	switch {
+	case baseline != "":
+		// A set Baseline always states both sides of the comparison, even when
+		// the tree being viewed is the live disk — otherwise the most common
+		// compare state never says what is being compared with what. The
+		// Viewing line is non-empty by construction whenever this branch runs.
+		ui.header.SetText(viewing + "\n" + baseline)
 		lines = 2
+	case viewing != "":
+		ui.header.SetText(viewing)
+	case ui.coveringHint:
+		ui.header.SetText(historyHint)
+	default:
+		ui.header.SetText(upstreamHint)
 	}
 	ui.setHeaderHeight(lines)
 }
 
-// viewingLine renders the Viewing slot, or "" when the View is live (the
-// default slot). The Esc hint appears only when it is the innermost layer: no
-// Baseline set, and a return view to go back to.
+// viewingLine renders the Viewing slot. It is empty only in the default state —
+// a live tree with no Baseline — where the single hint line owns the header. The
+// Esc hint appears only when it is the innermost layer: no Baseline set (Esc
+// clears that first), and a return view to go back to.
 func (ui *UI) viewingLine() string {
-	if ui.viewIsLive() {
+	if ui.viewIsLive() && !ui.inDiffMode() {
 		return ""
 	}
-	v := ui.currentView
-	var what string
-	if v.snapshot != nil {
-		what = fmt.Sprintf("snapshot %s · %s · read-only",
-			v.snapshot.ScanTs.Local().Format(headerTimeLayout),
-			path.ShortenPath(v.snapshot.ScanRoot, headerRootMaxLen))
-	} else {
-		what = fmt.Sprintf("import %s · read-only", v.importLabel)
+	what := ui.viewingWhat()
+	if ui.viewIsLive() {
+		return fmt.Sprintf(" %s Viewing   %s", ui.viewingGlyph(), what)
 	}
-	hints := "[ older · ] newer"
+	hints := "[ ] step"
 	if !ui.inDiffMode() && ui.returnView != nil && ui.currentView != ui.returnView {
 		hints += " · Esc return"
 	}
-	return fmt.Sprintf(" Viewing  %-52s %s", what, hints)
+	return fmt.Sprintf(" %s Viewing   %s — %s", ui.viewingGlyph(), what, hints)
 }
 
-// baselineLine renders the Baseline slot, or "" when no baseline is set.
+// viewingWhat names the tree being viewed: an archived snapshot, an
+// identity-less import, or the live disk with the root and time of its scan. A
+// UI that predates the view model (device list, tests driving currentDir
+// directly) is live with whatever root it has and no scan time.
+func (ui *UI) viewingWhat() string {
+	v := ui.currentView
+	switch {
+	case v != nil && v.snapshot != nil:
+		return fmt.Sprintf("snapshot %s · %s · read-only",
+			v.snapshot.ScanTs.Local().Format(headerTimeLayout),
+			path.ShortenPath(v.snapshot.ScanRoot, headerRootMaxLen))
+	case v != nil && v.importLabel != "":
+		return fmt.Sprintf("import %s · read-only", v.importLabel)
+	}
+	what := "live"
+	root := ui.topDirPath
+	if v != nil && v.topPath != "" {
+		root = v.topPath
+	}
+	if root != "" {
+		what += " " + path.ShortenPath(root, headerRootMaxLen)
+	}
+	if v != nil && !v.scannedAt.IsZero() {
+		what += " — scanned " + v.scannedAt.Local().Format(headerClockLayout)
+	}
+	return what
+}
+
+// baselineLine renders the Baseline slot, or "" when no baseline is set. The
+// tail names the one view toggle (Δ rendering) so the comparison is never
+// silently alive, then the keys that act on it.
 func (ui *UI) baselineLine() string {
 	if !ui.inDiffMode() {
 		return ""
 	}
-	what := fmt.Sprintf("snapshot %s · Δ shown", ui.baselineTs.Local().Format(headerTimeLayout))
-	return fmt.Sprintf(" Baseline %-52s %s", what, "> < sort · Esc clear")
+	return fmt.Sprintf(" %s Baseline  %s (%s ago) — Δ shown · > < sort · Esc clear",
+		ui.baselineGlyph(),
+		ui.baselineTs.Local().Format(headerTimeLayout),
+		humanAge(time.Since(ui.baselineTs)))
 }
 
 // setHeaderHeight resizes the grid's header row (1↔2 lines), preserving the
-// status-bar row when it is shown.
+// status-bar row when it is shown. Before the grid exists it just records the
+// height, which createGrid then lays the row out at.
 func (ui *UI) setHeaderHeight(lines int) {
-	if ui.grid == nil || ui.headerHidden || lines == ui.headerLines {
+	if ui.headerHidden || lines == ui.headerLines {
 		return
 	}
 	ui.headerLines = lines
+	if ui.grid == nil {
+		return
+	}
 	ui.statusMut.RLock()
 	statusShown := ui.status != nil
 	ui.statusMut.RUnlock()
@@ -116,24 +173,36 @@ func (ui *UI) setHeaderHeight(lines int) {
 }
 
 // dirLabelPrefix carries the View/Baseline state into the directory-label line
-// for header-hidden configs, so the mode is never invisible.
+// for header-hidden configs, so the mode is never invisible. It follows the
+// header's rule exactly: the Viewing slot appears whenever the header would
+// render it, which includes a live tree once a Baseline is set — the
+// compared-from side is never the missing one.
 func (ui *UI) dirLabelPrefix() string {
 	if !ui.headerHidden {
 		return ""
 	}
 	prefix := ""
-	if !ui.viewIsLive() {
-		v := ui.currentView
-		if v.snapshot != nil {
-			prefix += fmt.Sprintf("[snapshot %s] ", v.snapshot.ScanTs.Local().Format(headerDateLayout))
-		} else {
-			prefix += fmt.Sprintf("[import %s] ", v.importLabel)
-		}
+	if !ui.viewIsLive() || ui.inDiffMode() {
+		prefix += fmt.Sprintf("[%s %s] ", ui.viewingGlyph(), ui.compactViewLabel())
 	}
 	if ui.inDiffMode() {
-		prefix += fmt.Sprintf("[Δ vs %s] ", ui.baselineTs.Local().Format(headerDateLayout))
+		prefix += fmt.Sprintf("[%s %s Δ] ", ui.baselineGlyph(),
+			ui.baselineTs.Local().Format(headerDateLayout))
 	}
 	return prefix
+}
+
+// compactViewLabel names the viewed tree in the few characters the
+// header-hidden prefix can spare.
+func (ui *UI) compactViewLabel() string {
+	v := ui.currentView
+	switch {
+	case v != nil && v.snapshot != nil:
+		return "snapshot " + v.snapshot.ScanTs.Local().Format(headerDateLayout)
+	case v != nil && v.importLabel != "":
+		return "import " + v.importLabel
+	}
+	return "live"
 }
 
 // snapshotFooter renders the always-on footer for a snapshot View:
@@ -151,7 +220,7 @@ func (ui *UI) snapshotFooter() string {
 // liveSwitchFooter renders the footer flashed when stepping (or going live)
 // lands back on the in-memory live tree.
 func liveSwitchFooter(scannedAt time.Time) string {
-	return fmt.Sprintf(" live · scanned %s — r to refresh", scannedAt.Local().Format("15:04"))
+	return fmt.Sprintf(" live · scanned %s — r to refresh", scannedAt.Local().Format(headerClockLayout))
 }
 
 // setFooter renders the footer's resting text and remembers it, so transient

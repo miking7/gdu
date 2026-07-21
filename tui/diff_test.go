@@ -91,8 +91,12 @@ func TestBaselineAsCreateUIOptionDoesNotPanic(t *testing.T) {
 			func(u *UI) { u.SetBaseline(b, snapAt(time.Date(2026, 5, 31, 23, 59, 0, 0, time.Local))) })
 	})
 	assert.True(t, ui.inDiffMode())
-	assert.Contains(t, ui.header.GetText(true), "Baseline snapshot 2026-05-31 23:59",
+	assert.Contains(t, ui.header.GetText(true), "◇ Baseline  2026-05-31 23:59",
 		"header should show the Baseline slot once the widget is built")
+	assert.Contains(t, ui.header.GetText(true), "● Viewing   live",
+		"and the Viewing slot naming what it is compared with")
+	assert.Equal(t, 2, ui.headerLines,
+		"the grid's header row is laid out at two lines even though the baseline predates it")
 	assert.Contains(t, ui.header.GetText(true), "Esc clear")
 }
 
