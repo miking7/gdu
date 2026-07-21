@@ -46,6 +46,27 @@ func devicesWithSystemVolume() device.Devices {
 	}
 }
 
+// timeMachineMount is a transient macOS Time Machine local-snapshot mount: its
+// device name does not start with /dev, so the block-device filter behind
+// GetDevicesInfo drops it while the raw mount table keeps it.
+const timeMachineMount = "/Volumes/com.apple.TimeMachine.localsnapshots/Backups.backupdb/host/2026-07-20-115135/Data"
+
+// splitMountsMock is the realistic getter: GetMounts returns the raw table,
+// GetDevicesInfo only the mounts that survive the block-device name filter.
+type splitMountsMock struct{}
+
+func (splitMountsMock) GetDevicesInfo() (device.Devices, error) {
+	return devicesWithSystemVolume(), nil
+}
+
+func (splitMountsMock) GetMounts() (device.Devices, error) {
+	raw := devicesWithSystemVolume()
+	return append(raw,
+		&device.Device{Name: "com.apple.TimeMachine.2026-07-20-115135.local@/dev/disk3s5", MountPoint: timeMachineMount},
+		&device.Device{Name: "map auto_home", MountPoint: "/System/Volumes/Data/home", Fstype: "autofs"},
+	), nil
+}
+
 func newLauncherUI(t *testing.T) *UI {
 	t.Helper()
 	app := testapp.CreateMockedApp(false)
@@ -384,7 +405,7 @@ func TestDeviceMountWidthAdaptsToWidth(t *testing.T) {
 	assert.Less(t, ui.deviceMountWidth(devs, true), mid, "the snapshot column reserves width")
 }
 
-func TestLauncherScanResetsIgnorePatternForFolder(t *testing.T) {
+func TestLauncherScanClearsMountIgnoresForFolder(t *testing.T) {
 	app := testapp.CreateMockedApp(false)
 	sim := testapp.CreateSimScreen()
 	defer sim.Fini()
@@ -397,29 +418,33 @@ func TestLauncherScanResetsIgnorePatternForFolder(t *testing.T) {
 	require.NotNil(t, base)
 
 	require.NoError(t, ui.OpenLauncher(launcherDevicesMock(), "/root", true))
-	assert.Equal(t, base, ui.launcherBaseIgnore, "OpenLauncher captures the user's ignore pattern")
 
-	// A disk scan overwrites the ignore pattern with that disk's nested mounts.
+	// A disk scan excludes that disk's nested mounts — without touching the
+	// user's configured pattern.
 	// (launcherRunScan, not launcherScan: a / root would trip the forced sudo prompt.)
 	ui.launcherRunScan(&launcherRow{kind: launcherDisk, root: "/", dev: &device.Device{MountPoint: "/", Size: 100}})
-	assert.NotEqual(t, base, ui.IgnoreDirPathPatterns, "a disk scan sets its nested-mount ignore pattern")
+	assert.True(t, ui.ShouldDirBeIgnoredAsNestedMount("SD", "/Volumes/SD"),
+		"a disk scan excludes the mounts nested under it")
+	assert.Equal(t, base, ui.IgnoreDirPathPatterns, "a disk scan leaves the user's ignore pattern alone")
 	assert.EqualValues(t, 100, ui.currentDeviceSize)
 	<-ui.done
 	drainUpdates(ui)
 
-	// A subsequent folder scan must restore the user's base pattern and clear the
-	// device size — not leak the disk's.
+	// A subsequent folder scan must drop the disk's mount boundary and device
+	// size — and still leave the user's pattern intact.
 	ui.launcherScan(&launcherRow{kind: launcherFolder, root: "test_dir"})
-	assert.Equal(t, base, ui.IgnoreDirPathPatterns, "a folder scan restores the user's configured ignore pattern")
+	assert.False(t, ui.ShouldDirBeIgnoredAsNestedMount("SD", "/Volumes/SD"),
+		"a folder scan drops the previous disk scan's mount boundary")
+	assert.Equal(t, base, ui.IgnoreDirPathPatterns, "the user's configured ignore pattern survives both scans")
 	assert.Zero(t, ui.currentDeviceSize, "a folder scan clears the device size")
 	<-ui.done
 	drainUpdates(ui)
 }
 
-func TestLauncherIgnoresUseUnfilteredMounts(t *testing.T) {
-	// The display hides /System/Volumes/*, but nested-mount ignore
-	// computation must use the FULL list, or scanning / would descend into
-	// /System/Volumes/Data and double-count the disk.
+func TestLauncherIgnoresUseRawMountTable(t *testing.T) {
+	// The device list the screens show keeps only mounts whose device name looks
+	// like a block device. Computing the ignores from it let a / scan descend
+	// into a Time Machine local snapshot and count the whole disk twice.
 	app := testapp.CreateMockedApp(false)
 	sim := testapp.CreateSimScreen()
 	defer sim.Fini()
@@ -427,9 +452,7 @@ func TestLauncherIgnoresUseUnfilteredMounts(t *testing.T) {
 	ui.Analyzer = &testanalyze.MockedAnalyzer{}
 	ui.done = make(chan struct{})
 
-	mock := testdev.DevicesInfoGetterMock{}
-	mock.Devices = devicesWithSystemVolume()
-	require.NoError(t, ui.OpenLauncher(mock, "/Users/x", false))
+	require.NoError(t, ui.OpenLauncher(splitMountsMock{}, "/Users/x", false))
 
 	// Hidden from the rows...
 	for _, r := range ui.launcher.rows {
@@ -437,13 +460,44 @@ func TestLauncherIgnoresUseUnfilteredMounts(t *testing.T) {
 			require.NotEqual(t, "/System/Volumes/Data", r.root)
 		}
 	}
-	// ...but ui.devices stays unfiltered, so a / scan's ignore pattern covers it.
+	// ...but ui.devices stays unfiltered by HideSystemVolumes, for row mapping.
 	rootDev := ui.devices[0]
 	require.Equal(t, "/", rootDev.MountPoint)
+
 	ui.launcherRunScan(&launcherRow{kind: launcherDisk, root: "/", dev: rootDev})
-	require.NotNil(t, ui.IgnoreDirPathPatterns)
-	assert.True(t, ui.IgnoreDirPathPatterns.MatchString("/System/Volumes/Data"),
+	assert.True(t, ui.ShouldDirBeIgnoredAsNestedMount("Data", "/System/Volumes/Data"),
 		"scanning / ignores the hidden system volume (no double-count)")
+	assert.True(t, ui.ShouldDirBeIgnoredAsNestedMount("Data", timeMachineMount),
+		"scanning / ignores a Time Machine local-snapshot mount (dropped by the display filter)")
+	assert.True(t, ui.ShouldDirBeIgnoredAsNestedMount("home", "/System/Volumes/Data/home"),
+		"scanning / ignores an autofs mount (dropped by the display filter)")
+	<-ui.done
+	drainUpdates(ui)
+}
+
+func TestLauncherIgnoresMountWithRegexMetacharacters(t *testing.T) {
+	// Mount points are matched as exact paths, so a volume name carrying regex
+	// metacharacters is excluded literally — and excludes nothing else.
+	app := testapp.CreateMockedApp(false)
+	sim := testapp.CreateSimScreen()
+	defer sim.Fini()
+	ui := CreateUI(app, sim, &bytes.Buffer{}, false, false, false, false)
+	ui.Analyzer = &testanalyze.MockedAnalyzer{}
+	ui.done = make(chan struct{})
+
+	const oddVolume = "/Volumes/Backups (2026) + old"
+	mock := testdev.DevicesInfoGetterMock{}
+	mock.Devices = device.Devices{
+		{Name: "disk1s1", MountPoint: "/", Size: 1e12, Free: 5e11},
+		{Name: "disk2s1", MountPoint: oddVolume, Size: 1e12, Free: 5e11},
+	}
+	require.NoError(t, ui.OpenLauncher(mock, "/Users/x", false))
+
+	ui.launcherRunScan(&launcherRow{kind: launcherDisk, root: "/", dev: ui.devices[0]})
+	assert.True(t, ui.ShouldDirBeIgnoredAsNestedMount("Backups (2026) + old", oddVolume),
+		"a mount point with regex metacharacters is matched literally")
+	assert.False(t, ui.ShouldDirBeIgnoredAsNestedMount("Backups 2026  old", "/Volumes/Backups 2026  old"),
+		"the metacharacters are not interpreted")
 	<-ui.done
 	drainUpdates(ui)
 }

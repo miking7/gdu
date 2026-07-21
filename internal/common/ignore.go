@@ -36,22 +36,51 @@ func CreateIgnorePattern(paths []string) (compiled *regexp.Regexp, err error) {
 	return regexp.Compile(ignore)
 }
 
-// SetIgnoreDirPaths sets paths to ignore
-func (ui *UI) SetIgnoreDirPaths(paths []string) {
-	log.Printf("Ignoring dirs %s", strings.Join(paths, ", "))
-	ui.IgnoreDirPaths = make(map[string]struct{}, len(paths)*2)
+// pathVariants builds the lookup set for exact-path matching: each path plus
+// its absolute/root-relative counterpart, so a path configured either way
+// matches the paths the analyzer actually walks.
+func pathVariants(paths []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(paths)*2)
 	for _, path := range paths {
-		ui.IgnoreDirPaths[path] = struct{}{}
+		set[path] = struct{}{}
 		if !filepath.IsAbs(path) {
 			if absPath, err := filepath.Abs(path); err == nil {
-				ui.IgnoreDirPaths[absPath] = struct{}{}
+				set[absPath] = struct{}{}
 			}
 		} else {
 			if relPath, err := filepath.Rel("/", path); err == nil {
-				ui.IgnoreDirPaths[relPath] = struct{}{}
+				set[relPath] = struct{}{}
 			}
 		}
 	}
+	return set
+}
+
+// SetIgnoreDirPaths sets paths to ignore
+func (ui *UI) SetIgnoreDirPaths(paths []string) {
+	log.Printf("Ignoring dirs %s", strings.Join(paths, ", "))
+	ui.IgnoreDirPaths = pathVariants(paths)
+}
+
+// SetNestedMountPaths records the mount points nested under the root about to be
+// scanned — the directories a scan must not descend into to stay on one
+// filesystem, and (on macOS) to avoid counting the data volume a second time
+// through a firmlink. It replaces the whole set; nil or empty clears it, so
+// every scan starts from its own mount boundary and the previous scan's mounts
+// never leak into it.
+//
+// This is separate storage from SetIgnoreDirPaths/SetIgnoreDirPatterns, which
+// hold what the *user* asked to ignore and must survive any number of scans
+// untouched. Matching exact paths rather than a compiled pattern also means a
+// mount point containing regex metacharacters — a volume named "Backups (old)"
+// — is matched literally.
+func (ui *UI) SetNestedMountPaths(paths []string) {
+	if len(paths) == 0 {
+		ui.nestedMountPaths = nil
+		return
+	}
+	log.Printf("Ignoring mount points: %s", strings.Join(paths, ", "))
+	ui.nestedMountPaths = pathVariants(paths)
 }
 
 // SetIgnoreDirPatterns sets regular patterns of dirs to ignore
@@ -110,6 +139,16 @@ func (ui *UI) ShouldDirBeIgnored(name, path string) bool {
 	_, shouldIgnore := ui.IgnoreDirPaths[path]
 	if shouldIgnore {
 		log.Printf("Directory %s ignored", path)
+	}
+	return shouldIgnore
+}
+
+// ShouldDirBeIgnoredAsNestedMount returns true if given path is a mount point
+// nested under the root being scanned (see SetNestedMountPaths).
+func (ui *UI) ShouldDirBeIgnoredAsNestedMount(name, path string) bool {
+	_, shouldIgnore := ui.nestedMountPaths[path]
+	if shouldIgnore {
+		log.Printf("Mount point %s ignored", path)
 	}
 	return shouldIgnore
 }
@@ -183,34 +222,38 @@ func (ui *UI) ShouldFileBeIncludedByType(name string) bool {
 	return false
 }
 
-// CreateIgnoreFunc returns function for detecting if dir should be ignored
-// nolint: gocyclo // Why: This function is a switch statement that is not too complex
+// CreateIgnoreFunc returns function for detecting if dir should be ignored.
+// The active checks are OR'd together, composed rather than enumerated so that
+// adding one costs a single branch instead of doubling a combination table.
 func (ui *UI) CreateIgnoreFunc() ShouldDirBeIgnored {
-	switch {
-	case len(ui.IgnoreDirPaths) > 0 && ui.IgnoreDirPathPatterns == nil && !ui.IgnoreHidden:
-		return ui.ShouldDirBeIgnored
-	case len(ui.IgnoreDirPaths) > 0 && ui.IgnoreDirPathPatterns != nil && !ui.IgnoreHidden:
-		return func(name, path string) bool {
-			return ui.ShouldDirBeIgnored(name, path) || ui.ShouldDirBeIgnoredUsingPattern(name, path)
-		}
-	case len(ui.IgnoreDirPaths) > 0 && ui.IgnoreDirPathPatterns != nil && ui.IgnoreHidden:
-		return func(name, path string) bool {
-			return ui.ShouldDirBeIgnored(name, path) || ui.ShouldDirBeIgnoredUsingPattern(name, path) || ui.IsHiddenDir(name, path)
-		}
-	case len(ui.IgnoreDirPaths) == 0 && ui.IgnoreDirPathPatterns != nil && ui.IgnoreHidden:
-		return func(name, path string) bool {
-			return ui.ShouldDirBeIgnoredUsingPattern(name, path) || ui.IsHiddenDir(name, path)
-		}
-	case len(ui.IgnoreDirPaths) == 0 && ui.IgnoreDirPathPatterns != nil && !ui.IgnoreHidden:
-		return ui.ShouldDirBeIgnoredUsingPattern
-	case len(ui.IgnoreDirPaths) == 0 && ui.IgnoreDirPathPatterns == nil && ui.IgnoreHidden:
-		return ui.IsHiddenDir
-	case len(ui.IgnoreDirPaths) > 0 && ui.IgnoreDirPathPatterns == nil && ui.IgnoreHidden:
-		return func(name, path string) bool {
-			return ui.ShouldDirBeIgnored(name, path) || ui.IsHiddenDir(name, path)
-		}
-	default:
+	var checks []ShouldDirBeIgnored
+	if len(ui.IgnoreDirPaths) > 0 {
+		checks = append(checks, ui.ShouldDirBeIgnored)
+	}
+	if len(ui.nestedMountPaths) > 0 {
+		checks = append(checks, ui.ShouldDirBeIgnoredAsNestedMount)
+	}
+	if ui.IgnoreDirPathPatterns != nil {
+		checks = append(checks, ui.ShouldDirBeIgnoredUsingPattern)
+	}
+	if ui.IgnoreHidden {
+		checks = append(checks, ui.IsHiddenDir)
+	}
+
+	switch len(checks) {
+	case 0:
 		return func(name, path string) bool { return false }
+	case 1:
+		return checks[0]
+	default:
+		return func(name, path string) bool {
+			for _, check := range checks {
+				if check(name, path) {
+					return true
+				}
+			}
+			return false
+		}
 	}
 }
 

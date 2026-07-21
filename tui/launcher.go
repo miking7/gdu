@@ -13,7 +13,6 @@ import (
 	"github.com/rivo/tview"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/dundee/gdu/v5/internal/common"
 	"github.com/dundee/gdu/v5/pkg/device"
 	"github.com/dundee/gdu/v5/pkg/fs"
 	"github.com/dundee/gdu/v5/pkg/parquet"
@@ -110,18 +109,13 @@ type launcherState struct {
 // mount enumeration is flaky.
 func (ui *UI) OpenLauncher(getter device.DevicesInfoGetter, defaultPath string, pathFromArg bool) error {
 	ui.getter = getter
-	// Capture the user's configured ignore pattern before any launcher scan can
-	// overwrite it with a disk's nested-mount ignores (OpenLauncher runs once,
-	// at startup, before any scan; re-entry uses showLauncher, which doesn't
-	// re-capture).
-	ui.launcherBaseIgnore = ui.IgnoreDirPathPatterns
 	devices, err := getter.GetDevicesInfo()
 	if err != nil {
 		log.Printf("launcher: listing devices failed, showing folder rows only: %s", err)
 		devices = nil
 	}
-	// ui.devices stays the UNFILTERED list — launcherScan computes nested-mount
-	// ignores from it (a filtered list would double-count /System/Volumes/Data).
+	// Unfiltered by HideSystemVolumes: the rows filter for display, but
+	// snapshot row-mapping needs every mount to resolve a path to its disk.
 	ui.devices = devices
 	ui.showLauncher(defaultPath, pathFromArg)
 	return nil
@@ -572,26 +566,17 @@ func (ui *UI) launcherScan(r *launcherRow) {
 
 // launcherRunScan closes the launcher and scans a chosen row — a deliberate root,
 // so it saves a snapshot per the tri-state. A disk row retains the
-// nested-mount ignore behavior from deviceItemSelected, computed from the
-// unfiltered device list.
+// nested-mount ignore behavior from deviceItemSelected.
 func (ui *UI) launcherRunScan(r *launcherRow) {
 	ui.closeLauncher()
 	ui.resetSorting()
 
-	// Start each scan from the user's configured ignores and no device size, so
-	// a prior disk scan's nested-mount pattern and disk size never leak into a
-	// later folder scan (reachable via the left-arrow-returns-to-launcher flow).
-	ui.IgnoreDirPathPatterns = ui.launcherBaseIgnore
+	// Clear the device size so a prior disk scan's size never leaks into a
+	// later folder scan (reachable via the left-arrow-returns-to-launcher
+	// flow). The scan's mount boundary is resolved per scan, in analyzePath.
 	ui.currentDeviceSize = 0
-
-	if r.kind == launcherDisk && r.dev != nil {
-		paths := device.GetNestedMountpointsPaths(r.dev.MountPoint, ui.devices)
-		pattern, err := common.CreateIgnorePattern(paths)
-		if err != nil {
-			log.Printf("Creating path patterns for other devices failed (%s): %s", paths, err)
-		} else {
-			ui.IgnoreDirPathPatterns = pattern
-		}
+	wholeDevice := r.kind == launcherDisk && r.dev != nil
+	if wholeDevice {
 		ui.currentDeviceSize = r.dev.Size
 	}
 
@@ -599,7 +584,7 @@ func (ui *UI) launcherRunScan(r *launcherRow) {
 	ui.linkedItems = make(fs.HardLinkedItems)
 	// landPath lands the view at the default dir when this is the pinned own-disk
 	// row; for every other row it equals the scanned root.
-	if err := ui.analyzePath(r.root, nil, scanOpts{landPath: r.landPath()}); err != nil {
+	if err := ui.analyzePath(r.root, nil, scanOpts{landPath: r.landPath(), wholeDevice: wholeDevice}); err != nil {
 		ui.showErr("Error analyzing path", err)
 	}
 }

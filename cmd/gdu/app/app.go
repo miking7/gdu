@@ -365,7 +365,7 @@ func (a *App) Run() error {
 			return err
 		}
 	}
-	if err := a.setNoCross(path); err != nil {
+	if err := a.setNoCross(ui, path); err != nil {
 		return err
 	}
 
@@ -718,9 +718,19 @@ func (a *App) getOptions() []tui.Option {
 			ui.SetBrowseParentDirs()
 		})
 	}
-	opts = append(opts, func(ui *tui.UI) {
-		ui.SetShowDiskProgressBar(a.Flags.Style.ProgressModal.ShowDiskProgressBar)
-	})
+	opts = append(opts,
+		func(ui *tui.UI) {
+			ui.SetShowDiskProgressBar(a.Flags.Style.ProgressModal.ShowDiskProgressBar)
+		},
+		// --no-cross is handed to the TUI rather than resolved here: the launcher
+		// lets the user pick the scan root after startup, so the mount points to
+		// skip are only known once a scan begins. The getter goes with it, since a
+		// run that opens neither the launcher nor the device screen still needs the
+		// mount table to resolve that boundary.
+		func(ui *tui.UI) {
+			ui.SetNoCross(a.Flags.NoCross)
+			ui.SetDevicesGetter(a.Getter)
+		})
 	// The S baseline picker lists snapshots from the archive even without
 	// --save-snapshots, so wire the resolved snapshots-dir through unconditionally.
 	if snapshotsDir, derr := a.resolveSnapshotsDir(); derr == nil {
@@ -756,16 +766,29 @@ func (a *App) baselineOption(path string) (tui.Option, error) {
 	return func(ui *tui.UI) { ui.SetBaseline(b, &info) }, nil
 }
 
-func (a *App) setNoCross(path string) error {
-	if a.Flags.NoCross {
-		mounts, err := a.Getter.GetMounts()
-		if err != nil {
-			return fmt.Errorf("loading mount points: %w", err)
-		}
-		paths := device.GetNestedMountpointsPaths(path, mounts)
-		log.Printf("Ignoring mount points: %s", strings.Join(paths, ", "))
-		a.Flags.IgnoreDirs = append(a.Flags.IgnoreDirs, paths...)
+// setNoCross adds the mount points nested under path to the ignored dirs, so
+// the scan stays inside one filesystem. It applies when the user asked for it
+// and, regardless, when the root reaches the same bytes through two paths —
+// otherwise a macOS / scan counts the data volume twice.
+//
+// path is the startup path, which is the scan root for every UI that reaches
+// here. The TUI is the exception and is skipped: there the root is whatever
+// the user picks in the launcher, so its scans resolve their own boundary and
+// a startup-derived one would linger for the rest of the session.
+func (a *App) setNoCross(ui UI, path string) error {
+	if _, isTUI := ui.(*tui.UI); isTUI {
+		return nil
 	}
+	if !a.Flags.NoCross && !device.ScanRootAliasesMounts(path) {
+		return nil
+	}
+	mounts, err := a.Getter.GetMounts()
+	if err != nil {
+		return fmt.Errorf("loading mount points: %w", err)
+	}
+	paths := device.GetNestedMountpointsPaths(path, mounts)
+	log.Printf("Ignoring mount points: %s", strings.Join(paths, ", "))
+	a.Flags.IgnoreDirs = append(a.Flags.IgnoreDirs, paths...)
 	return nil
 }
 

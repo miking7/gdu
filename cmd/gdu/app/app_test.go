@@ -22,7 +22,9 @@ import (
 	"github.com/dundee/gdu/v5/pkg/device"
 	gfs "github.com/dundee/gdu/v5/pkg/fs"
 	"github.com/dundee/gdu/v5/stdout"
+	"github.com/dundee/gdu/v5/tui"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func init() {
@@ -668,6 +670,35 @@ func TestNoCross(t *testing.T) {
 
 	assert.Contains(t, out, "nested")
 	assert.Nil(t, err)
+}
+
+// noCrossDevices is a mount table with one filesystem mounted inside another.
+func noCrossDevices() device.DevicesInfoGetter {
+	return testdev.DevicesInfoGetterMock{Devices: device.Devices{
+		{Name: "/dev/disk1", MountPoint: "/"},
+		{Name: "/dev/disk2", MountPoint: "/mnt/data"},
+	}}
+}
+
+func TestSetNoCrossAppendsMountsForNonInteractiveRun(t *testing.T) {
+	a := App{Flags: &Flags{NoCross: true}, Getter: noCrossDevices()}
+
+	require.NoError(t, a.setNoCross(&uiTimeFilterMock{}, "/"))
+
+	assert.Contains(t, a.Flags.IgnoreDirs, "/mnt/data",
+		"a non-interactive run scans the startup path, so its mounts resolve once, here")
+}
+
+func TestSetNoCrossSkipsTheTUI(t *testing.T) {
+	sim := testapp.CreateSimScreen()
+	defer sim.Fini()
+	tuiUI := tui.CreateUI(testapp.CreateMockedApp(false), sim, &bytes.Buffer{}, false, false, false, false)
+	a := App{Flags: &Flags{NoCross: true}, Getter: noCrossDevices()}
+
+	require.NoError(t, a.setNoCross(tuiUI, "/"))
+
+	assert.Empty(t, a.Flags.IgnoreDirs,
+		"the TUI resolves the boundary per scan root; a startup-derived one would linger all session")
 }
 
 func TestListDevices(t *testing.T) {

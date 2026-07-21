@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"regexp"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -105,6 +104,10 @@ type UI struct {
 	browseParentDirs        bool
 	showDiskProgressBar     bool
 	currentDeviceSize       int64
+	// noCross is --no-cross: keep every scan inside one filesystem. It is held
+	// as the flag, not resolved into ignore paths at startup, because the root
+	// to resolve it against is only known once a scan starts.
+	noCross bool
 	// growth-diff browsing: a session-only baseline snapshot the
 	// current tree is diffed against. nil means normal browsing.
 	baseline   *analyze.Baseline
@@ -188,13 +191,9 @@ type UI struct {
 	// holds the current launcher screen (nil when it isn't shown; the pointer
 	// also guards its async fill). usingLauncher stays true once the launcher is
 	// the navigation home, so left-arrow at a live tree's top returns there
-	// rather than to the standalone device list. launcherBaseIgnore is the
-	// user's configured --ignore-dirs-pattern captured once at OpenLauncher, so
-	// a folder scan can restore it after a disk scan overwrote it with that
-	// disk's nested-mount ignores.
-	launcher           *launcherState
-	usingLauncher      bool
-	launcherBaseIgnore *regexp.Regexp
+	// rather than to the standalone device list.
+	launcher      *launcherState
+	usingLauncher bool
 }
 
 type deleteQueueItem struct {
@@ -501,6 +500,20 @@ func (ui *UI) SetBrowseParentDirs() {
 	ui.browseParentDirs = true
 }
 
+// SetNoCross keeps every scan within one filesystem, skipping the mount points
+// nested under whatever root each scan is started from.
+func (ui *UI) SetNoCross(value bool) {
+	ui.noCross = value
+}
+
+// SetDevicesGetter sets the source of the mount table. The launcher and the
+// device screen also set it when they list devices, but a scan needs it too —
+// to resolve its mount boundary — so it is wired up even for a run that opens
+// neither.
+func (ui *UI) SetDevicesGetter(getter device.DevicesInfoGetter) {
+	ui.getter = getter
+}
+
 // SetCollapsePath sets the flag to collapse paths
 func (ui *UI) SetCollapsePath(value bool) {
 	ui.collapsePath = value
@@ -613,16 +626,9 @@ func (ui *UI) fileItemSelected(row, column int) {
 }
 
 func (ui *UI) deviceItemSelected(row, column int) {
-	var err error
 	selectedDevice, ok := ui.table.GetCell(row, column).GetReference().(*device.Device)
 	if !ok {
 		return
-	}
-
-	paths := device.GetNestedMountpointsPaths(selectedDevice.MountPoint, ui.devices)
-	ui.IgnoreDirPathPatterns, err = common.CreateIgnorePattern(paths)
-	if err != nil {
-		log.Printf("Creating path patterns for other devices failed: %s", paths)
 	}
 
 	ui.resetSorting()
@@ -630,8 +636,8 @@ func (ui *UI) deviceItemSelected(row, column int) {
 	ui.currentDeviceSize = selectedDevice.Size
 	ui.Analyzer.ResetProgress()
 	ui.linkedItems = make(fs.HardLinkedItems)
-	err = ui.AnalyzePath(selectedDevice.MountPoint, nil)
-	if err != nil {
+	// Measuring a device: the scan stops at the mounts nested inside it.
+	if err := ui.analyzePath(selectedDevice.MountPoint, nil, scanOpts{wholeDevice: true}); err != nil {
 		ui.showErr("Error analyzing device", err)
 	}
 }
