@@ -612,32 +612,14 @@ func (ui *UI) fileItemSelected(row, column int) {
 		return
 	}
 
-	// we are going up in the directory tree, select the last visited directory
-	if origDir.GetParent() != nil {
-		nestedDir := origDir
-		for nestedDir.GetParent() != nil {
-			if selectedDir.GetName() == nestedDir.GetParent().GetName() {
-				sortBy, sortOrder := ui.getSortParams()
-				index := -1
-				i := 0
-				for item := range ui.currentDir.GetFiles(sortBy, sortOrder) {
-					if item.GetName() == nestedDir.GetName() {
-						index = i
-						break
-					}
-					i++
-				}
-				if index >= 0 {
-					if ui.currentDir.GetPath() != ui.topDir.GetPath() {
-						index++
-					}
-					ui.table.Select(index, 0)
-				}
-				break
-			}
-			nestedDir = nestedDir.GetParent()
-		}
-	}
+	// We navigated up (the /.. row); put the cursor back on the directory we came
+	// from. Match by reference identity rather than recomputing a row index from a
+	// sort order: the compare view orders its rows by its own (Δ) sort and
+	// interleaves reference-less removed rows, so an index derived from the plain
+	// sort would land on the wrong row — the bug this replaces. A collapsed
+	// chain's row references its deepest dir, which is exactly the dir we came
+	// from, so the same lookup covers the collapsed plain view too.
+	ui.selectItemByReference(origDir)
 }
 
 func (ui *UI) deviceItemSelected(row, column int) {

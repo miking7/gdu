@@ -131,6 +131,24 @@ func (ui *UI) selectItemByName(name string) {
 	}
 }
 
+// selectItemByReference moves the table cursor to the row whose cell references
+// item (by pointer identity), if one is visible. Identity is exact and
+// order-independent, so it works across the plain and compare renderings even
+// though they order rows differently and compare interleaves reference-less
+// removed rows.
+func (ui *UI) selectItemByReference(item fs.Item) {
+	for row := 0; row < ui.table.GetRowCount(); row++ {
+		cell := ui.table.GetCell(row, 0)
+		if cell == nil {
+			continue
+		}
+		if ref, ok := cell.GetReference().(fs.Item); ok && ref == item {
+			ui.table.Select(row, 0)
+			return
+		}
+	}
+}
+
 // selectedItemName returns the name of the item under the cursor, or "".
 func (ui *UI) selectedItemName() string {
 	row, column := ui.table.GetSelection()

@@ -182,6 +182,23 @@ gdu can export/import scans as Apache Parquet and auto-archive them for trend an
   tree), *not* a `tui.view`; the fork's `enterPreview`/`exitPreview` render the live position
   momentarily, and `[`/`]` leave the preview and step the timeline. (This folds upstream's #593
   quit-confirm and #594 mid-scan preview into the fork's model.)
+- **Two tree renderers, deliberately kept parallel — keep them aligned.** The plain view
+  (`showDir`) and the compare view (`showDiffDir`, [tui/diff.go](tui/diff.go)) are **separate
+  functions on purpose**: compare's row source (`buildDiffRows`, with its own Δ sort and inline
+  reference-less removed rows), footer, and no-collapse rule differ enough that a single merged
+  pass would trade visible duplication for hidden mode-branching, and `showDir` stays close to
+  upstream's shape so syncs keep applying. They are held in step by three seams, not by a full
+  merge: **shared helpers** (`setParentRow`, `accumulateBarMax`, `applyRowStyle`, and above all
+  `formatFileRow` — one row formatter, the Δ field passed in), a **shared column geometry**
+  (`middleWidth`/`deltaCell` mirror `formatFileRow`'s implicit widths), and **guard tests**
+  (`TestCompareViewHasNormalAnatomy`, `TestCompareRemovedRowColumnAlignment`, the up-nav tests).
+  So: any change to a column, row order, or navigation must be made in **both** renderers (or in the
+  shared helper) and its guard test extended — and the same when pulling an upstream change that
+  touches `showDir`. **No order-derived row indexing outside a renderer** — select by item/reference
+  identity (`selectItemByReference`/`selectItemByName`), never by recomputing a `GetFiles` index,
+  because the two renderings order rows differently. Compare deliberately **ignores `--collapse-path`**
+  (deltas attach to real paths; a collapsed chain hides the levels a removal sits on), so its
+  up-navigation steps the plain parent one real level at a time.
 - **Launcher**: the interactive front door
   ([tui/launcher.go](tui/launcher.go)), absorbing the standalone device page and left-arrow-at-top.
   Bare `gdu` **and** `gdu <path>` **and** interactive `gdu -d` open it; `App.launcherEnabled()`

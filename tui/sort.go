@@ -32,7 +32,10 @@ func (ui *UI) SetDefaultSorting(by, order string) {
 }
 
 func (ui *UI) setSorting(newOrder string) {
-	ui.markedRows = make(map[int]struct{})
+	// A re-sort reorders the rows; both the mark and ignore maps are keyed by row
+	// index, so both must reset or a mark/ignore would silently move onto another
+	// item — the same invariant every mode transition upholds.
+	ui.resetRowSelection()
 
 	// Per-mode memory: the compare view keeps its own (sortBy, order) so plain
 	// and compare each stay exactly as last sorted across a Tab toggle. Re-press

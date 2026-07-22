@@ -243,14 +243,19 @@ func (ui *UI) setParentRow() int {
 	}
 	cell := tview.NewTableCell(prefix + "[::b]/..")
 
-	// Use the collapsed parent logic to handle navigation back through collapsed paths
-	var collapsedParent fs.Item
-	if ui.collapsePath {
-		collapsedParent = findCollapsedParent(ui.currentDir)
+	// The parent to navigate up into. The compare view renders the tree
+	// uncollapsed (deltas attach to real paths, and a collapsed chain would hide
+	// exactly the levels a removal can sit on), so it descends and must ascend one
+	// real level at a time — the plain parent. Only the plain view's collapsed
+	// rendering uses the collapsed parent, so up matches the chain its row jumped
+	// down through.
+	var parent fs.Item
+	if ui.collapsePath && !ui.renderingDelta() {
+		parent = findCollapsedParent(ui.currentDir)
 	} else {
-		collapsedParent = ui.currentDir.GetParent()
+		parent = ui.currentDir.GetParent()
 	}
-	cell.SetReference(collapsedParent)
+	cell.SetReference(parent)
 	cell.SetStyle(tcell.Style{}.Foreground(tcell.ColorDefault))
 	ui.table.SetCell(0, 0, cell)
 	return 1

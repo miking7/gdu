@@ -27,8 +27,10 @@ const (
 	diffApproxColor   = "#f2c94c"
 	diffSizeMuteColor = "#8a92a0"
 
-	// diffDeltaWidth is the cell width reserved for the marker + signed delta. It
-	// fits the widest single-unit binary magnitude ("▲ +1023.9 GiB" = 13 cells).
+	// diffDeltaWidth is the cell width reserved for the Δ field: the category
+	// glyph in the left gutter plus the signed magnitude right-aligned in the
+	// rest, wide enough for the widest single-unit binary magnitude
+	// ("+1023.9 GiB" = 11 cells → glyph + 2 pad + magnitude = 14).
 	diffDeltaWidth = 14
 
 	minusSign = "−" // U+2212, the sign shown on negative (shrink/removed) deltas
@@ -329,7 +331,7 @@ func (ui *UI) formatRemovedRow(e *analyze.RemovedEntry) string {
 		row += defaultColorBold + region
 	}
 
-	body := padCells(fmt.Sprintf("✗ −%s", ui.plainSize(e.Size)), diffDeltaWidth)
+	body := deltaCell('✗', minusSign+ui.plainSize(e.Size))
 	if ui.UseColors {
 		row += " [" + diffRemovedColor + "::b]" + body + " "
 	} else {
@@ -374,26 +376,35 @@ func (ui *UI) middleWidth() int {
 	return w
 }
 
-// deltaField renders the marker glyph and signed magnitude for one category,
-// padded to a fixed cell width so the bars line up.
+// deltaField renders the marker glyph and signed magnitude for one category. The
+// glyph sits in the field's left gutter and the magnitude is right-aligned in the
+// rest, so the size units line up down the column exactly as the size column's do.
 func (ui *UI) deltaField(delta int64, cat analyze.DiffCategory) string {
 	glyph, color := diffGlyphColor(cat)
 	var body string
 	switch cat {
 	case analyze.DiffUnchanged, analyze.DiffUncovered:
-		body = string(glyph)
+		// A bare category glyph (·, ?) sits alone in the left gutter.
+		body = padCells(string(glyph), diffDeltaWidth)
 	case analyze.DiffGrew, analyze.DiffShrank, analyze.DiffNew, analyze.DiffApprox:
 		sign := "+"
 		if delta < 0 {
 			sign = minusSign
 		}
-		body = fmt.Sprintf("%c %s%s", glyph, sign, ui.plainSize(absInt64(delta)))
+		body = deltaCell(glyph, sign+ui.plainSize(absInt64(delta)))
 	}
-	body = padCells(body, diffDeltaWidth)
 	if ui.UseColors {
 		return "[" + color + "::b]" + body
 	}
 	return defaultColorBold + body
+}
+
+// deltaCell lays out one Δ field: the category glyph fixed in the left gutter,
+// then the signed magnitude right-aligned in the remaining cells so the size
+// units line up down the column. Shared by the present-row (deltaField) and
+// removed-row (formatRemovedRow) renderers so their Δ columns can never drift.
+func deltaCell(glyph rune, magnitude string) string {
+	return string(glyph) + padCellsLeft(magnitude, diffDeltaWidth-1)
 }
 
 // setDiffFooter writes the tree-wide reconciliation for the current directory:
@@ -473,6 +484,15 @@ func diffGlyphColor(cat analyze.DiffCategory) (glyph rune, color string) {
 func padCells(s string, width int) string {
 	if n := utf8.RuneCountInString(s); n < width {
 		return s + strings.Repeat(" ", width-n)
+	}
+	return s
+}
+
+// padCellsLeft left-pads s with spaces to width display cells, right-aligning
+// it. Every glyph used here is a single cell, so a rune count is the cell count.
+func padCellsLeft(s string, width int) string {
+	if n := utf8.RuneCountInString(s); n < width {
+		return strings.Repeat(" ", width-n) + s
 	}
 	return s
 }

@@ -36,7 +36,13 @@ func (ui *UI) deleteMarked(shouldEmpty bool) {
 	var currentDir fs.Item
 	var markedItems []fs.Item
 	for row := range ui.markedRows {
-		item := ui.table.GetCell(row, 0).GetReference().(fs.Item)
+		// Defensive: a marked row should always carry an item (marks reset on every
+		// re-sort and mode transition), but skip rather than panic if one ever
+		// pointed at a reference-less removed row in the compare view.
+		item, ok := ui.table.GetCell(row, 0).GetReference().(fs.Item)
+		if !ok {
+			continue
+		}
 		markedItems = append(markedItems, item)
 	}
 
@@ -153,7 +159,11 @@ func (ui *UI) printMarked() {
 		return
 	}
 	for row := range ui.markedRows {
-		item := ui.table.GetCell(row, 0).GetReference().(fs.Item)
+		// Defensive: skip a marked row with no item rather than panic (see deleteMarked).
+		item, ok := ui.table.GetCell(row, 0).GetReference().(fs.Item)
+		if !ok {
+			continue
+		}
 		ui.markedPaths = append(ui.markedPaths, item.GetPath())
 	}
 	ui.markedRows = make(map[int]struct{})

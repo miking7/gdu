@@ -369,6 +369,26 @@ against a Baseline** (a snapshot, for growth diff). Four invariants:
   the numbers add up even when removed rows scroll off. Growth sort lives in the TUI sort path, not
   `fs.SortBy` — `fs` stays baseline-unaware. The three hues form a CVD-safe triad and every state
   also has a glyph, so `--no-color` loses nothing.
+- **Compare renders the normal table plus a Δ column — not a replacement layout.** The earlier diff
+  view dropped columns, recolored the size, and rescaled the bar to |Δ|, which quietly broke the
+  "sort by growth → mark → delete" workflow (marks rendered invisibly). Now present rows go through
+  the *same* row formatter as the plain view (`formatFileRow`, with the signed Δ field passed in),
+  so the flag/size/percentage/**usage-scaled** bar/count/mtime/mark columns are byte-identical and
+  marks work and show; the Δ ranking comes from the sort and the signed numbers, not a rescaled bar.
+  Δ magnitudes are **right-aligned** (glyph in a fixed left gutter, size units lined up down the
+  column exactly as the size column's) via one shared `deltaCell` used by both the present-row and
+  removed-row renderers, so those two Δ columns can never drift. **The plain (`showDir`) and compare
+  (`showDiffDir`) renderers are deliberately kept as two parallel functions rather than merged into
+  one**: their row source (a Δ sort with inline reference-less removed rows), footer, and collapse
+  rule genuinely differ, a merge would trade visible duplication for hidden mode-branching, and
+  `showDir` stays close to upstream so syncs keep applying. Drift is prevented structurally instead
+  — shared helpers (`setParentRow`, `accumulateBarMax`, `applyRowStyle`, `formatFileRow`), a shared
+  column geometry, and guard tests — with the full merge reserved for if a later feature adds a new
+  column or row type. Two consequences of "deltas annotate real paths": compare **ignores
+  `--collapse-path`** (a collapsed `a/b/c` chain would hide the very levels a removal sits on), so it
+  descends and ascends one real level at a time; and up-navigation re-selects the came-from directory
+  by **reference identity**, never by recomputing a row index from a sort order — the two renderings
+  order rows differently, so an index from one applied to the other lands on the wrong row.
 - **Covering is volume-scoped.** A snapshot counts for a folder iff its root covers the folder
   *and* lies at-or-below the folder's most-specific mount point (longest path-prefix over the
   *unfiltered* mount list — deliberately not `statfs`, whose macOS firmlink answer

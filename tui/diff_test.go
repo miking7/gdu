@@ -233,7 +233,8 @@ func TestCompareViewHasNormalAnatomy(t *testing.T) {
 	newfile := diffRowContaining(ui, "newfile")
 	require.NotEmpty(t, newfile)
 	assert.Contains(t, newfile, "▏", "the usage bar still renders (normal anatomy)")
-	assert.Contains(t, newfile, "✦ +100 B", "the appended Δ column renders the growth")
+	assert.Contains(t, newfile, "✦", "the appended Δ column marks the new item")
+	assert.Contains(t, newfile, "+100 B", "and renders the signed growth magnitude")
 
 	// Present rows carry their item so d/e/space act on them; removed rows don't.
 	bigRef := cellRefContaining(ui, "big")
@@ -410,6 +411,218 @@ func TestCompareTransitionsResetSelection(t *testing.T) {
 	require.NotEmpty(t, ui.markedRows)
 	setBaseline(ui)
 	assert.Empty(t, ui.markedRows, "SetBaseline must reset the marks")
+}
+
+// upNavCurrent / upNavBaseline build a tree where the plain (size) order and the
+// compare (Δ) order deliberately disagree: "aaa" is small but grew a lot, "bbb"
+// is large but unchanged. So plain size-desc is [bbb, aaa] while Δ-desc is
+// [aaa, bbb] — an index computed in one order and applied to the other selects
+// the wrong row.
+func upNavCurrent() *analyze.Dir {
+	top := &analyze.Dir{File: &analyze.File{Name: "top"}, ItemCount: 1}
+	aaa := &analyze.Dir{File: &analyze.File{Name: "aaa", Parent: top}, ItemCount: 1}
+	aaa.AddFile(&analyze.File{Name: "af", Size: 100, Usage: 100, Flag: ' ', Parent: aaa})
+	bbb := &analyze.Dir{File: &analyze.File{Name: "bbb", Parent: top}, ItemCount: 1}
+	bbb.AddFile(&analyze.File{Name: "bf", Size: 900, Usage: 900, Flag: ' ', Parent: bbb})
+	top.AddFile(aaa)
+	top.AddFile(bbb)
+	top.UpdateStats(make(fs.HardLinkedItems))
+	return top
+}
+
+func upNavBaseline() *analyze.Dir {
+	top := &analyze.Dir{File: &analyze.File{Name: "top"}, ItemCount: 1}
+	aaa := &analyze.Dir{File: &analyze.File{Name: "aaa", Parent: top}, ItemCount: 1}
+	aaa.AddFile(&analyze.File{Name: "af", Size: 10, Usage: 10, Flag: ' ', Parent: aaa}) // aaa grew 10->100
+	bbb := &analyze.Dir{File: &analyze.File{Name: "bbb", Parent: top}, ItemCount: 1}
+	bbb.AddFile(&analyze.File{Name: "bf", Size: 900, Usage: 900, Flag: ' ', Parent: bbb}) // bbb unchanged
+	top.AddFile(aaa)
+	top.AddFile(bbb)
+	top.UpdateStats(make(fs.HardLinkedItems))
+	return top
+}
+
+// descendInto navigates into the directory row named name (its own row, not a
+// substring match), as a real Enter/right-arrow would.
+func descendInto(t *testing.T, ui *UI, name string) {
+	t.Helper()
+	for r := 0; r < ui.table.GetRowCount(); r++ {
+		c := ui.table.GetCell(r, 0)
+		if c == nil {
+			continue
+		}
+		if ref, ok := c.GetReference().(fs.Item); ok && ref.GetName() == name {
+			ui.fileItemSelected(r, 0)
+			return
+		}
+	}
+	t.Fatalf("no navigable row named %q", name)
+}
+
+// selectedRef returns the fs.Item under the cursor.
+func selectedRef(t *testing.T, ui *UI) fs.Item {
+	t.Helper()
+	row, col := ui.table.GetSelection()
+	ref, ok := ui.table.GetCell(row, col).GetReference().(fs.Item)
+	require.True(t, ok, "the selected row must carry an item")
+	return ref
+}
+
+// TestCompareUpNavSelectsCameFromDir guards the wrong-highlight bug: after
+// stepping up out of a child in the compare view, the cursor must land back on
+// that child. The old code recomputed the row from the plain sort order and so
+// selected a different row once the compare (Δ) order diverged from it.
+func TestCompareUpNavSelectsCameFromDir(t *testing.T) {
+	ui := newDiffUI(t)
+	ui.currentDir = upNavCurrent()
+	ui.topDir = ui.currentDir
+	ui.topDirPath = "top"
+	ui.SetBaseline(analyze.BuildBaseline(upNavBaseline(), "top", 0), snapAt(diffBaselineTime()))
+
+	// aaa is the big grower, so Δ-desc sorts it to the top — a different row than
+	// its position in the plain size order.
+	descendInto(t, ui, "aaa")
+	require.Equal(t, "aaa", ui.currentDir.GetName(), "descended into aaa")
+
+	ui.handleLeft() // step back up to top
+
+	require.Equal(t, "top", ui.currentDir.GetName(), "returned to top")
+	assert.Equal(t, "aaa", selectedRef(t, ui).GetName(),
+		"the cursor must land on the directory we came from, not a plain-sort index guess")
+}
+
+// TestPlainUpNavSelectsCameFromDir locks in that the by-reference reselect keeps
+// the plain view's long-standing up-navigation behavior intact.
+func TestPlainUpNavSelectsCameFromDir(t *testing.T) {
+	ui := newDiffUI(t)
+	ui.currentDir = upNavCurrent()
+	ui.topDir = ui.currentDir
+	ui.topDirPath = "top"
+	ui.showDir()
+
+	descendInto(t, ui, "aaa")
+	require.Equal(t, "aaa", ui.currentDir.GetName())
+
+	ui.handleLeft()
+
+	require.Equal(t, "top", ui.currentDir.GetName())
+	assert.Equal(t, "aaa", selectedRef(t, ui).GetName(),
+		"plain up-navigation still lands on the directory we came from")
+}
+
+// teleportTree builds top → xxx → yyy (single-child chain) with a sibling under
+// top, so with --collapse-path the plain view collapses "xxx/yyy" into one row
+// and up-navigation from yyy jumps straight to top. The compare view renders the
+// chain uncollapsed, so it must step yyy → xxx one real level.
+func teleportTree() *analyze.Dir {
+	top := &analyze.Dir{File: &analyze.File{Name: "top"}, ItemCount: 1}
+	xxx := &analyze.Dir{File: &analyze.File{Name: "xxx", Parent: top}, ItemCount: 1}
+	yyy := &analyze.Dir{File: &analyze.File{Name: "yyy", Parent: xxx}, ItemCount: 1}
+	yyy.AddFile(&analyze.File{Name: "yf", Size: 100, Usage: 100, Flag: ' ', Parent: yyy})
+	xxx.AddFile(yyy)
+	top.AddFile(xxx)
+	top.AddFile(&analyze.File{Name: "sibling", Size: 50, Usage: 50, Flag: ' ', Parent: top})
+	top.UpdateStats(make(fs.HardLinkedItems))
+	return top
+}
+
+// TestCompareUpNavNoCollapseTeleport confirms the compare view renders the true
+// tree and steps up one real level even with --collapse-path on, rather than
+// teleporting over a chain the plain view would have collapsed.
+func TestCompareUpNavNoCollapseTeleport(t *testing.T) {
+	ui := newDiffUI(t)
+	ui.collapsePath = true
+	ui.currentDir = teleportTree()
+	ui.topDir = ui.currentDir
+	ui.topDirPath = "top"
+	ui.SetBaseline(analyze.BuildBaseline(teleportTree(), "top", 0), snapAt(diffBaselineTime()))
+
+	// The true tree: xxx renders as its own row, not collapsed into "xxx/yyy".
+	joined := strings.Join(diffRowTexts(ui), "\n")
+	assert.Contains(t, joined, "xxx")
+	assert.NotContains(t, joined, "xxx/yyy", "compare must render the tree uncollapsed")
+
+	descendInto(t, ui, "xxx")
+	require.Equal(t, "xxx", ui.currentDir.GetName())
+	descendInto(t, ui, "yyy")
+	require.Equal(t, "yyy", ui.currentDir.GetName())
+
+	ui.handleLeft() // up from yyy
+	assert.Equal(t, "xxx", ui.currentDir.GetName(),
+		"compare + collapse-path: up-nav is the plain parent (no teleport to top)")
+}
+
+// magnitudeRightCurrent / magnitudeRightBaseline grow two present files by
+// clearly different magnitude widths ("+900 B" vs "+1.5 GiB") so a right-aligned
+// Δ column lines their units up while a left-aligned one would not.
+func magnitudeRightCurrent() *analyze.Dir {
+	const gi = 1 << 30
+	top := &analyze.Dir{File: &analyze.File{Name: "top"}, ItemCount: 1}
+	top.AddFile(&analyze.File{Name: "small", Size: 1000, Usage: 1000, Flag: ' ', Parent: top})
+	top.AddFile(&analyze.File{Name: "huge", Size: 3 * gi, Usage: 3 * gi, Flag: ' ', Parent: top})
+	top.UpdateStats(make(fs.HardLinkedItems))
+	return top
+}
+
+func magnitudeRightBaseline() *analyze.Dir {
+	const gi = 1 << 30
+	top := &analyze.Dir{File: &analyze.File{Name: "top"}, ItemCount: 1}
+	top.AddFile(&analyze.File{Name: "small", Size: 100, Usage: 100, Flag: ' ', Parent: top})              // +900 B
+	top.AddFile(&analyze.File{Name: "huge", Size: 3 * gi / 2, Usage: 3 * gi / 2, Flag: ' ', Parent: top}) // +1.5 GiB
+	top.UpdateStats(make(fs.HardLinkedItems))
+	return top
+}
+
+// visibleEndOffset returns the on-screen column just past the last cell of needle
+// within the row containing rowKey (tag-stripped).
+func visibleEndOffset(t *testing.T, ui *UI, rowKey, needle string) int {
+	t.Helper()
+	for r := 0; r < ui.table.GetRowCount(); r++ {
+		c := ui.table.GetCell(r, 0)
+		if c == nil || !strings.Contains(c.Text, rowKey) {
+			continue
+		}
+		i := strings.Index(c.Text, needle)
+		require.GreaterOrEqual(t, i, 0, "%q not in row %q", needle, c.Text)
+		return tview.TaggedStringWidth(c.Text[:i+len(needle)])
+	}
+	t.Fatalf("row %q not found", rowKey)
+	return -1
+}
+
+// TestCompareDeltaMagnitudeRightAligned asserts the signed Δ magnitudes are
+// right-aligned so their size units line up down the column, matching the size
+// column and the §4.2 mock — the drift this fixes rendered them left-aligned.
+func TestCompareDeltaMagnitudeRightAligned(t *testing.T) {
+	ui := newDiffUI(t)
+	ui.currentDir = magnitudeRightCurrent()
+	ui.topDir = ui.currentDir
+	ui.topDirPath = "top"
+	ui.SetBaseline(analyze.BuildBaseline(magnitudeRightBaseline(), "top", 0), snapAt(diffBaselineTime()))
+
+	// Two present rows whose magnitudes differ in width end at the same column iff
+	// the magnitude is right-aligned.
+	smallEnd := visibleEndOffset(t, ui, "small", "+900 B")
+	hugeEnd := visibleEndOffset(t, ui, "huge", "+1.5 GiB")
+	assert.Equal(t, hugeEnd, smallEnd,
+		"Δ magnitudes must be right-aligned so their units line up (small ends at %d, huge at %d)",
+		smallEnd, hugeEnd)
+}
+
+// TestReSortResetsIgnores confirms a re-sort clears the index-keyed ignore map
+// as well as the mark map: both drift when the rows reorder, so both must reset
+// (the ignore reset was missing before — only marks were cleared).
+func TestReSortResetsIgnores(t *testing.T) {
+	ui := newDiffUI(t)
+	ui.showDir()
+	ui.ignoredRows[1] = struct{}{}
+	ui.markedRows[1] = struct{}{}
+	require.NotEmpty(t, ui.ignoredRows)
+
+	pressRune(ui, 'n') // sort by name
+
+	assert.Empty(t, ui.markedRows, "a re-sort resets marks")
+	assert.Empty(t, ui.ignoredRows, "a re-sort resets ignores too — they are index-keyed")
 }
 
 // alignBig/alignBaseline build a tree whose sizes are large enough to stress the
