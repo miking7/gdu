@@ -203,7 +203,21 @@ gdu can export/import scans as Apache Parquet and auto-archive them for trend an
   past. **Tab** previews the partial tree found so far — page-level state (progress ↔ partial
   tree), *not* a `tui.view`; the fork's `enterPreview`/`exitPreview` render the live position
   momentarily, and `[`/`]` leave the preview and step the timeline. (This folds upstream's #593
-  quit-confirm and #594 mid-scan preview into the fork's model.)
+  quit-confirm and #594 mid-scan preview into the fork's model.) **Scan-time Δ rules**: a partial
+  tree never diffs — `renderingDelta()` is false while `previewing`, so a set baseline is
+  *suppressed* (rendered plain), never cleared, and the diff resumes on its own at completion
+  (`enforceBaselineCoverage` also no-ops mid-preview, so the baseline survives it). The `◇`
+  header tail shows `Δ paused — resumes when the scan completes` at the live position of a running
+  scan (`baselinePaused()` = `scanning && !scanPageHidden`, covering both the progress screen and
+  the preview; stepped into the past it is a complete snapshot, so the full grammar and the normal
+  tail apply). `showDir` never touches the header, so the paused↔shown flip is driven by explicit
+  `updateHeader()` calls at the scan-start / step-away / step-back / graft-completion seams. On a
+  watching completion with *no* baseline set, the footer flashes the root's growth since the
+  previous same-root snapshot (`flashCompletionGrowth`, manifest `total_dsize` only — no data-page
+  reads; the just-saved snapshot folds out, a zero delta stays silent); a baseline already on
+  screen makes its own report and suppresses the flash. `{`/`}` at the live position (progress
+  screen or preview) flash `scan running — Δ available when it completes` — arming a comparison
+  during a scan is future work.
 - **Two tree renderers, deliberately kept parallel — keep them aligned.** The plain view
   (`showDir`) and the compare view (`showDiffDir`, [tui/diff.go](tui/diff.go)) are **separate
   functions on purpose**: compare's row source (`buildDiffRows`, with its own Δ sort and inline
