@@ -132,7 +132,7 @@ non-interactive mode
 
 **-s**, **\--summarize**\[=false\] Show only a total in non-interactive mode
 
-**\--export-threshold**\[="0"\] Bucket objects smaller than this size into a '<smaller objects>' rollup on export. Binary units: 10M, 500K, 2G, or plain bytes. 0 = keep everything.
+**\--export-threshold** Bucket objects smaller than this size into a '<smaller objects>' rollup. Binary units: 10M, 500K, 2G, or plain bytes. Explicit 0 disables rollup everywhere. Unset (the default): -o exports keep everything, while auto-saved snapshots roll up at 10M to keep the archive compact.
 
 **-t**, **\--top**\[=0\] Show only top X largest files in non-interactive mode
 

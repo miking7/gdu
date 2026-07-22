@@ -82,6 +82,33 @@ func TestSaveSnapshotsEnabledTruthTable(t *testing.T) {
 	assert.False(t, (&Flags{SaveSnapshots: "auto", Top: 5}).SaveSnapshotsEnabled(true))
 }
 
+// TestResolveThresholds pins the unset-vs-explicit distinction: only an unset
+// (empty) threshold substitutes the compact snapshot default; an explicit value —
+// including "0" (keep everything) — applies verbatim to both exports and snapshots.
+func TestResolveThresholds(t *testing.T) {
+	const tenMiB = int64(10 << 20)
+
+	cases := []struct {
+		raw          string
+		export, save int64
+	}{
+		{"", 0, tenMiB},         // unset: exports keep everything, snapshots roll up at 10 MiB
+		{"  ", 0, tenMiB},       // whitespace-only is still unset
+		{"0", 0, 0},             // explicit 0: keep everything EVERYWHERE (the fix)
+		{"10M", tenMiB, tenMiB}, // explicit value applies to both
+		{"500K", 500 << 10, 500 << 10},
+	}
+	for _, c := range cases {
+		export, save, err := resolveThresholds(c.raw)
+		require.NoError(t, err, "raw %q", c.raw)
+		assert.Equal(t, c.export, export, "export bytes for %q", c.raw)
+		assert.Equal(t, c.save, save, "save bytes for %q", c.raw)
+	}
+
+	_, _, err := resolveThresholds("bogus")
+	assert.Error(t, err, "an unparseable value is an error, not a silent default")
+}
+
 func TestInteractiveAndNonInteractiveConflict(t *testing.T) {
 	out, err := runApp(t,
 		&Flags{Interactive: true, NonInteractive: true},

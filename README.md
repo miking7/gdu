@@ -95,7 +95,7 @@ Flags:
       --depth int                     Show directory structure up to specified depth in non-interactive mode (0 means the flag is ignored)
       --enable-profiling              Enable collection of profiling data and provide it on http://localhost:6060/debug/pprof/
   -E, --exclude-type strings          File types to exclude (e.g., --exclude-type yaml,json)
-      --export-threshold string       Bucket objects smaller than this size into a '<smaller objects>' rollup on export. Binary units: 10M, 500K, 2G, or plain bytes. 0 = keep everything. (default "0")
+      --export-threshold string       Bucket objects smaller than this size into a '<smaller objects>' rollup. Binary units: 10M, 500K, 2G, or plain bytes. Explicit 0 disables rollup everywhere. Unset: -o exports keep everything, auto-saved snapshots roll up at 10M.
   -L, --follow-symlinks               Follow symlinks for files, i.e. show the size of the file to which symlink points to (symlinks to directories are not followed)
   -h, --help                          help for gdu
   -i, --ignore-dirs strings           Paths to ignore (separated by comma). Can be absolute or relative to current directory (default [/proc,/dev,/sys,/run])
@@ -372,8 +372,9 @@ gdu --snapshots-dir ~/snaps /            # use a custom snapshots directory
 filesystem-safe slug of the scanned path so the file says what it covers at a glance — e.g.
 `snapshot_20260622T204452_volumes_sd.parquet` for `/Volumes/SD`, `…_users_michael.parquet` for
 `/Users/michael`, and `…_root.parquet` for `/`. Snapshots use a default rollup threshold of 10M
-(objects smaller than that are grouped into a `<smaller objects>` row); override it with
-`--export-threshold`.
+(objects smaller than that are grouped into a `<smaller objects>` row) so a daily whole-disk archive
+stays compact; override it with `--export-threshold` — an explicit `0` disables rollup and archives
+everything unrolled.
 
 To see what's archived, `gdu snapshots` (alias `gdu snaps`) prints a table of every snapshot in the
 archive (root, time, size); with a file argument it lists just that file's snapshots:

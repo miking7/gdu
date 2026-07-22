@@ -128,8 +128,17 @@ gdu can export/import scans as Apache Parquet and auto-archive them for trend an
 - **Threshold rollup** ([pkg/analyze/rollup.go](pkg/analyze/rollup.go)): `--export-threshold` (yaml key
   `export-threshold`) collapses files/dirs whose disk usage is below the threshold into a synthetic `<smaller objects>`
   `File`, preserving each directory's exact recursive totals. `analyze.Rollup` builds a pruned tree for
-  the JSON encoder; `pkg/parquet` does its own threshold-aware flatten for the flat row schema. Default
-  `0` = keep everything (current behavior). **Scope filters vs. output format**: Parquet output
+  the JSON encoder; `pkg/parquet` does its own threshold-aware flatten for the flat row schema.
+  **`--export-threshold` is *unset* by default, and unset means a different thing per output**
+  (`resolveThresholds` in [cmd/gdu/app/app.go](cmd/gdu/app/app.go)): `-o`/JSON exports keep everything
+  (0, byte-identical to upstream), while **auto-saved snapshots substitute `defaultSnapshotThreshold`
+  (10 MiB)** — deliberately, so a daily whole-disk archive is ~1.5 MB instead of ~60 MB and sub-10-MiB
+  objects (inconsequential for growth monitoring) collapse while every directory's recursive totals
+  stay exact. An **explicit** value — including `0` (keep everything) — applies verbatim to *both*.
+  Absence is the only unset signal: the flag default is `""` and the yaml key is `omitempty`, so a
+  written config omits it when unset and an explicit `0` is never coerced back to the 10 MiB default
+  (the old `threshold <= 0` trap). Tests wanting deep rows from a small fixture pass a positive value;
+  `--export-threshold 1` is enough. **Scope filters vs. output format**: Parquet output
   rejects `--top`/`--depth`/`--summarize` at startup (validated once in `App.createUI`) — a snapshot's
   manifest claims a complete scan, so a filtered file must never masquerade as one; `--export-threshold`
   is the only sanctioned lossy knob for snapshots (totals-preserving, recorded in the manifest). JSON

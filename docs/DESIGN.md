@@ -129,9 +129,14 @@ identical significance rules):
   existing encoder; the Parquet adapter emits flat rows directly during the walk — because a single
   `<smaller objects>` `File` node cannot carry represented-counts without inventing a bespoke
   `fs.Item` type.
-- **Defaults**: the flag defaults to `0` so explicit `-o` output stays byte-identical to upstream;
-  **auto-saved snapshots substitute 10 MiB** — the archive exists for trend analysis, and the
-  threshold is what keeps a whole-disk snapshot at tens of thousands of rows instead of millions.
+- **Defaults**: the flag is **unset** by default, and unset resolves per output (`resolveThresholds`):
+  explicit `-o`/JSON output stays byte-identical to upstream (keep everything), while **auto-saved
+  snapshots substitute 10 MiB** — the archive exists for trend analysis, and the threshold is what
+  keeps a whole-disk snapshot at tens of thousands of rows instead of millions. An **explicit** value —
+  including `0` (keep everything) — applies verbatim to both; *absence* is the sole "unset" signal (the
+  flag default is empty, the yaml key `omitempty`), so an explicit `0` is never coerced to the 10 MiB
+  default. Overloading `0` as the sentinel was the original bug: it silently forced the rollup on the
+  one user who asked to keep everything in their snapshots.
 - Export/auto-save force the full-tree analyzer in non-interactive mode (the default
   `TopDirAnalyzer` is shallow); the memory cost is documented rather than hidden.
 - **Scope filters are rejected for Parquet, honored for JSON.** `-o x.parquet` (or

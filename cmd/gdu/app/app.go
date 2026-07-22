@@ -111,7 +111,7 @@ type Flags struct {
 	CollapsePath       bool     `yaml:"collapse-path"`
 	BrowseParentDirs   bool     `yaml:"browse-parent-dirs"`
 	Launcher           bool     `yaml:"launcher"`
-	ExportThreshold    string   `yaml:"export-threshold"`
+	ExportThreshold    string   `yaml:"export-threshold,omitempty"`
 	SaveSnapshots      string   `yaml:"save-snapshots"`
 	NoAutoCompact      bool     `yaml:"no-auto-compact"`
 	SnapshotsDir       string   `yaml:"snapshots-dir"`
@@ -126,6 +126,27 @@ type Flags struct {
 // when --export-threshold is not set explicitly. Snapshots are for trend-tracking, so a
 // sensible non-zero default keeps them compact.
 const defaultSnapshotThreshold = 10 << 20 // 10 MiB
+
+// resolveThresholds turns the raw --export-threshold string into the byte
+// thresholds for -o exports and for auto-saved snapshots. The distinction that
+// matters is unset vs explicit: an *unset* threshold lets each output pick its
+// own default — exports keep everything (0, byte-identical to upstream), saved
+// snapshots roll up at defaultSnapshotThreshold to stay compact for daily whole-
+// disk archives — whereas any *explicit* value, including "0" (keep everything),
+// applies verbatim to both. Absence is the only "unset" signal (the flag default
+// is empty and the yaml key is omitempty), so an explicit 0 is never mistaken for
+// "use the default" — the trap of overloading 0 as the sentinel.
+func resolveThresholds(raw string) (exportBytes, saveBytes int64, err error) {
+	exportBytes, err = common.ParseSizeThreshold(raw)
+	if err != nil {
+		return 0, 0, err
+	}
+	saveBytes = exportBytes
+	if strings.TrimSpace(raw) == "" {
+		saveBytes = defaultSnapshotThreshold
+	}
+	return exportBytes, saveBytes, nil
+}
 
 // --save-snapshots tri-state values: "auto" saves interactive (TUI)
 // scans only, "always" saves in every mode, "never" disables saving.
@@ -326,11 +347,11 @@ func (a *App) Run() error {
 		ui.SetCollapsePath(true)
 	}
 
-	threshold, err := common.ParseSizeThreshold(a.Flags.ExportThreshold)
+	exportThreshold, saveThreshold, err := resolveThresholds(a.Flags.ExportThreshold)
 	if err != nil {
 		return fmt.Errorf("invalid --export-threshold value %q: %w", a.Flags.ExportThreshold, err)
 	}
-	ui.SetExportThreshold(threshold)
+	ui.SetExportThreshold(exportThreshold)
 	ui.SetSnapshotSelector(a.Flags.Snapshot, a.Flags.SnapshotRoot)
 
 	// The save-snapshots tri-state: "auto" (default) saves interactive scans,
@@ -347,10 +368,6 @@ func (a *App) Run() error {
 			// running (e.g. no $HOME in a stripped-down environment).
 			log.Printf("save-snapshots disabled: %s", derr)
 		default:
-			saveThreshold := threshold
-			if saveThreshold <= 0 {
-				saveThreshold = defaultSnapshotThreshold
-			}
 			ui.SetSaveSnapshot(snapshotsDir, saveThreshold)
 			// Auto-compaction rides on the save (default on; --no-auto-compact
 			// opts out). Without a snapshot write there is no trigger, so it is

@@ -240,8 +240,11 @@ compaction lock. `--no-auto-compact` (yaml `no-auto-compact`) opts out.
 ### Threshold rollup
 `--export-threshold 10M` buckets every file or directory whose disk usage is below the size into a
 synthetic `<smaller objects>` row, shrinking snapshots dramatically while preserving each directory's
-**exact** recursive totals. It applies to **both** JSON and Parquet export. `--export-threshold 0`
-(the default for `-o`) keeps gdu's output byte-for-byte; saved snapshots default to `10M`.
+**exact** recursive totals. It applies to **both** JSON and Parquet export. The flag is **unset by
+default**, and unset differs by output: `-o`/JSON exports keep gdu's output byte-for-byte, while
+auto-saved snapshots roll up at **10M** (a daily whole-disk archive stays ~1.5 MB instead of ~60 MB).
+An **explicit** value applies to both — and an explicit **`0` disables rollup everywhere**, archiving
+every object unrolled.
 
 ### sudo-friendly output
 Whole-disk scans usually need `sudo`. When run elevated, gdu resolves the **invoking** user (via

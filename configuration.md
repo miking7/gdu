@@ -58,9 +58,15 @@ intact, only the flag lost. Parquet snapshots carry it in a `dataless` column.
 
 #### `export-threshold`
 
-Bucket objects smaller than this size into a `<smaller objects>` rollup row on export, shrinking the
-exported file while preserving exact recursive totals. Accepts binary units (`10M`, `500K`, `2G`) or a
-plain byte count; `0` (the default) keeps everything. Applies to all export formats.
+Bucket objects smaller than this size into a `<smaller objects>` rollup row, shrinking the file while
+preserving exact recursive totals. Accepts binary units (`10M`, `500K`, `2G`) or a plain byte count.
+
+This key is **unset by default, and unset means different things per output**: `-o`/JSON exports keep
+everything, while auto-saved snapshots roll up at **10M** (see [snapshots](#save-snapshots) — a
+compact archive is the point). An **explicit** value applies to both, and **explicit `0` disables
+rollup everywhere** (keeps everything, even in saved snapshots). Because absence is what selects the
+per-output default, `gdu --write-config` omits this key entirely when it is unset; set it to `0`, not
+left blank, to keep everything in snapshots.
 
 #### `output-format`
 
@@ -99,7 +105,9 @@ opening a snapshot from the launcher (`s`/`S`) or with `-f` never scans, so it n
 quitting mid-scan asks (`Scan incomplete — quit without saving a snapshot?`) and discards.
 
 Saving does not change what gdu displays. Snapshots use a default rollup threshold of 10M unless
-`export-threshold` is set.
+`export-threshold` is set to an explicit value — a compact archive is the point, and 10M keeps a daily
+whole-disk snapshot small while preserving exact per-directory totals. To archive everything unrolled,
+set `export-threshold` to `0` (see [export-threshold](#export-threshold)).
 
 #### `snapshots-dir`
 
