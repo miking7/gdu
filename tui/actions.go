@@ -163,6 +163,11 @@ func (ui *UI) analyzePath(path string, parentDir fs.Item, opts scanOpts) error {
 	ui.scanPageHidden = false
 	ui.scanNudge = ""
 	ui.rebuildFooter() // show the right-edge "scanning…" indicator
+	// A running scan at the live position suspends any set comparison; refresh the
+	// header so the ◇ line switches to its paused tail (showDir never touches the
+	// header, and the scan-completion seams switch it back). Central here, so every
+	// scan entry point — launcher, r, device, end-of-timeline — is covered at once.
+	ui.updateHeader()
 	if parentDir == nil {
 		ui.refreshScanNudge(path)
 	}
@@ -238,6 +243,11 @@ func (ui *UI) analyzePath(path string, parentDir fs.Item, opts scanOpts) error {
 				if !ui.scanPageHidden {
 					ui.currentDir = currentDir
 					ui.showDir()
+					// scanning is now false, so a set baseline's ◇ tail must switch
+					// from paused back to its shown/hidden state; showDir does not
+					// touch the header, and this graft path never reaches finishRootScan
+					// (which would refresh it via applyView).
+					ui.updateHeader()
 				}
 				ui.pages.RemovePage("progress")
 				return
@@ -263,6 +273,11 @@ func (ui *UI) finishRootScan(
 	tree fs.Item, path string, scannedAt time.Time,
 	savedKey parquet.SnapshotKey, savedOK bool, opts scanOpts,
 ) {
+	// The completion growth flash nudges toward a comparison, so it is for the
+	// no-baseline case only — a comparison already on screen makes its own report
+	// and { steps it rather than starting one. Capture before applyView, which may
+	// E7-clear the baseline (that clear's own flash must then stand).
+	hadBaseline := ui.inDiffMode()
 	newView := &view{tree: tree, topPath: path, scannedAt: scannedAt}
 	ui.liveSavedKey = savedKey
 	ui.liveSavedValid = savedOK
@@ -307,6 +322,46 @@ func (ui *UI) finishRootScan(
 	}
 	ui.applyView(newView, targetPath, opts.keepSelection)
 	ui.refreshCoveringHint(path)
+	if !hadBaseline {
+		ui.flashCompletionGrowth(path, tree.GetUsage(), newView)
+	}
+}
+
+// flashCompletionGrowth flashes the footer with the scanned root's growth since
+// the previous covering snapshot of the same root — the cheap manifest-only nudge
+// toward `{`. It lists the archive off the event loop (like refreshScanNudge) and
+// reads the previous total from the footer manifest (total_dsize); no tree or
+// data-page reads. Same-root only, so the two totals are comparable; the snapshot
+// this scan just saved is skipped (it folds into the live position); a zero delta
+// stays silent. newTotal is captured at the hook so a later delete can't skew it,
+// and wantView guards the async flash: if the user has stepped away, gone live
+// elsewhere, started another scan, or set a baseline meanwhile, it does not fire.
+func (ui *UI) flashCompletionGrowth(root string, newTotal int64, wantView *view) {
+	if ui.snapshotsDir == "" {
+		return
+	}
+	devices, getter := ui.devices, ui.getter // captured on the loop for off-loop mount resolution
+	ui.goPickerWork(func() {
+		covering, err := ui.coveringForTarget(root, devices, getter)
+		if err != nil || len(covering) == 0 {
+			return
+		}
+		ui.app.QueueUpdateDraw(func() {
+			if ui.currentView != wantView || ui.scanning || ui.inDiffMode() {
+				return // the just-scanned live view is no longer what's on screen
+			}
+			for i := range covering { // newest first
+				l := covering[i]
+				if l.ScanRoot != root || ui.snapshotFoldsIntoLive(l.Key()) {
+					continue
+				}
+				if delta := newTotal - l.TotalDsize; delta != 0 {
+					ui.flashFooter(ui.completionGrowthFlash(delta, l.ScanTs))
+				}
+				return // the newest same-root non-folding snapshot decides
+			}
+		})
+	})
 }
 
 // refreshScanNudge asynchronously adds the scan-wait time-travel hint to the

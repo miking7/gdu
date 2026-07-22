@@ -25,6 +25,12 @@ const (
 	oldestNotice       = "already at the oldest snapshot"
 	scanCompleteNotice = "scan complete — ] to view"
 
+	// braceDuringScanNotice is flashed when { / } are pressed at the live position
+	// of a running scan (the progress screen or its preview): there is no complete
+	// tree to compare against yet, so they teach that Δ becomes available on
+	// completion. Arming the comparison from here is future work.
+	braceDuringScanNotice = "scan running — Δ available when it completes"
+
 	// baselineClearedFlash announces a { / } step that walked the baseline back
 	// onto the viewed position, or off the newest end — the "walk the comparison
 	// back to nothing" gesture that mirrors { entering it. viewingBaselineFlash
@@ -285,6 +291,8 @@ func (ui *UI) stepToLiveEnd() {
 		ui.timelinePos = len(ui.timelineEntries)
 		ui.scanPageHidden = false
 		ui.pages.ShowPage(scanProgressPage)
+		// Back at the live position of a running scan: a set baseline pauses again.
+		ui.updateHeader()
 		return
 	}
 
@@ -348,6 +356,10 @@ func (ui *UI) startStepLoad(target int) {
 	if front, _ := ui.pages.GetFrontPage(); front == scanProgressPage {
 		ui.pages.HidePage(scanProgressPage) // step away from the scan's live position
 		ui.scanPageHidden = true
+		// Leaving the live position un-pauses a set baseline (the snapshot being
+		// loaded is a complete tree the diff can render); refresh the ◇ tail now,
+		// before the loading page, so it never lingers paused behind the load.
+		ui.updateHeader()
 	}
 	ui.showLoadingPage("Loading snapshot...", " Snapshots ")
 

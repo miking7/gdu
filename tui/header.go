@@ -20,14 +20,24 @@ const (
 
 	// headerTimeLayout renders snapshot timestamps in header/footer copy
 	// ("2026-06-19 15:30"); headerDateLayout is the compact-prefix form and
-	// headerClockLayout the wall clock of a live scan ("14:02").
-	headerTimeLayout  = "2006-01-02 15:04"
-	headerDateLayout  = "2006-01-02"
-	headerClockLayout = "15:04"
+	// headerClockLayout the wall clock of a live scan ("14:02"). headerMonthDayLayout
+	// is the terse "07-14" the completion-growth flash names its since-date with.
+	headerTimeLayout     = "2006-01-02 15:04"
+	headerDateLayout     = "2006-01-02"
+	headerClockLayout    = "15:04"
+	headerMonthDayLayout = "01-02"
 
 	// headerRootMaxLen caps the snapshot root shown on the Viewing line so the
 	// key hints stay on screen.
 	headerRootMaxLen = 40
+
+	// baselinePausedTail is the ◇ line's tail while the comparison is suspended by
+	// a running scan at the live position: the partial tree never diffs (a preview
+	// renders plain), and the diff resumes automatically on completion. It names
+	// neither Tab nor Esc because, at the live position of a scan, both mean
+	// something other than the compare toggles (Tab enters/leaves the preview, Esc
+	// backs out of the scan).
+	baselinePausedTail = "Δ paused — resumes when the scan completes"
 )
 
 // Role glyphs. Every screen shows a Viewing tree, optionally against a
@@ -158,21 +168,34 @@ func (ui *UI) viewingWhat() string {
 	return what
 }
 
+// baselinePaused reports whether the ◇ comparison is suspended: the user is at
+// the live position of a running scan — the progress screen or its mid-scan
+// preview — where there is no complete live tree to diff against. Stepped into
+// the past mid-scan the front page is a finished snapshot View, not the live
+// position, so the full compare grammar applies there and the tail stays normal.
+func (ui *UI) baselinePaused() bool {
+	return ui.scanning && !ui.scanPageHidden
+}
+
 // baselineLine renders the Baseline slot, or "" when no baseline is set. The
 // tail names the one view toggle (Δ rendering) and how to flip it, so the
-// comparison is never silently alive and its state is always readable.
+// comparison is never silently alive and its state is always readable — except
+// while a scan suspends it, when the tail says so and names neither toggle.
 func (ui *UI) baselineLine() string {
 	if !ui.inDiffMode() {
 		return ""
+	}
+	when := fmt.Sprintf("%s (%s ago)",
+		ui.baselineTs.Local().Format(headerTimeLayout),
+		humanAge(time.Since(ui.baselineTs)))
+	if ui.baselinePaused() {
+		return ui.baselineFrame(when + " — " + baselinePausedTail)
 	}
 	tail := "Δ shown · Tab plain"
 	if ui.diffHidden {
 		tail = "Δ hidden · Tab compare"
 	}
-	return ui.baselineFrame(fmt.Sprintf("%s (%s ago) — %s · Esc clear",
-		ui.baselineTs.Local().Format(headerTimeLayout),
-		humanAge(time.Since(ui.baselineTs)),
-		tail))
+	return ui.baselineFrame(when + " — " + tail + " · Esc clear")
 }
 
 // setHeaderHeight resizes the grid's header row (1↔2 lines), preserving the
@@ -245,6 +268,19 @@ func (ui *UI) snapshotFooter() string {
 // lands back on the in-memory live tree.
 func liveSwitchFooter(scannedAt time.Time) string {
 	return fmt.Sprintf(" live · scanned %s — r to refresh", scannedAt.Local().Format(headerClockLayout))
+}
+
+// completionGrowthFlash renders the scan-completion footer flash: how much the
+// scanned root grew since the previous same-root snapshot, the terse since-date,
+// and the key that starts the comparison. delta is signed (the root's total now
+// minus that snapshot's total_dsize).
+func (ui *UI) completionGrowthFlash(delta int64, since time.Time) string {
+	sign := "+"
+	if delta < 0 {
+		sign = minusSign
+	}
+	return fmt.Sprintf(" %s%s since %s — { to compare",
+		sign, ui.plainSize(absInt64(delta)), since.Local().Format(headerMonthDayLayout))
 }
 
 // setFooter renders the footer's resting text and remembers it, so transient

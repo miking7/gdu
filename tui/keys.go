@@ -267,6 +267,12 @@ func (ui *UI) handlePreviewKeys(key *tcell.EventKey) *tcell.EventKey {
 		ui.exitPreview()
 		ui.handleStepKey(key.Rune())
 		return nil
+	case '{', '}':
+		// The preview is the same suspended live position as the progress screen:
+		// { } have nothing to walk yet, so they teach that Δ arrives on completion
+		// rather than dying silently (pre-arming is future work).
+		ui.headerNoticeNow(braceDuringScanNotice)
+		return nil
 	case '?':
 		ui.showHelp()
 		return nil
@@ -517,11 +523,20 @@ func (ui *UI) handleLoadingPageKeys(key *tcell.EventKey) *tcell.EventKey {
 		ui.handleStepKey(key.Rune())
 		return nil
 	}
-	// { } keep stepping the baseline while a step-load's loading page is up, but
-	// stay inert on a running scan's progress page (pre-arming is stage-5 work).
-	if (key.Rune() == '{' || key.Rune() == '}') && front == loadingPage && ui.timelineActive {
-		ui.handleBraceKey(key.Rune())
-		return nil
+	// { } step the baseline while a step-load's loading page is up (the timeline is
+	// pinned then). On the live scan's progress screen there is nothing to walk yet
+	// — pre-arming a comparison is future work — so they teach that Δ becomes
+	// available on completion. The ui.scanning gate keeps them dead during a -f
+	// read, whose page is also named "progress".
+	if key.Rune() == '{' || key.Rune() == '}' {
+		switch {
+		case front == loadingPage && ui.timelineActive:
+			ui.handleBraceKey(key.Rune())
+			return nil
+		case front == scanProgressPage && ui.scanning:
+			ui.headerNoticeNow(braceDuringScanNotice)
+			return nil
+		}
 	}
 	// On the scan's progress screen Esc backs out of a recording scan, raising
 	// the same quit-without-saving confirmation as 'q'. This is the layered
