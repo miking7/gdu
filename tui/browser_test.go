@@ -278,6 +278,42 @@ func TestBrowserViewMayVisitOtherRoots(t *testing.T) {
 	assert.Equal(t, browserOtherRow, st.rows[st.viewCur].kind, "● reaches the other-roots row, skipping the divider")
 }
 
+// TestBrowserPageStepsViewCursorInSync: PgUp/PgDn page the ● cursor and keep the
+// tview selection highlight on it — the desync that let Enter act on a row other
+// than the highlighted one cannot happen.
+func TestBrowserPageStepsViewCursorInSync(t *testing.T) {
+	ui := browserTestUI(t)
+	st := ui.newBrowserStateForTest(treeBrowserCfg(focusViewing, coveringListingsForTest(20)))
+	require.Equal(t, 0, st.viewCur)
+
+	ui.browserPage(st, +1) // PgDn
+	assert.Greater(t, st.viewCur, 0, "PgDn advances ● by a page")
+	selRow, _ := st.table.GetSelection()
+	assert.Equal(t, st.viewCur+1, selRow, "the highlight stays on ●'s row (no desync)")
+
+	top := st.viewCur
+	ui.browserPage(st, -1) // PgUp
+	assert.Less(t, st.viewCur, top, "PgUp moves ● back up")
+	selRow, _ = st.table.GetSelection()
+	assert.Equal(t, st.viewCur+1, selRow, "the highlight follows ●")
+}
+
+// TestBrowserPageStepsBaselineCursor: with ◇ focused, PgDn pages the ◇ cursor
+// within the covering snapshots (never onto the live row or into other-roots),
+// and the highlight follows it.
+func TestBrowserPageStepsBaselineCursor(t *testing.T) {
+	ui := browserTestUI(t)
+	st := ui.newBrowserStateForTest(treeBrowserCfg(focusBaseline, coveringListingsForTest(20)))
+	require.GreaterOrEqual(t, st.baseCur, 0, "the B door engaged ◇")
+	start := st.baseCur
+
+	ui.browserPage(st, +1) // PgDn pages ◇ older
+	assert.Greater(t, st.baseCur, start, "PgDn pages ◇ toward older")
+	assert.Equal(t, browserSnapRow, st.rows[st.baseCur].kind, "◇ stays on covering snapshots")
+	selRow, _ := st.table.GetSelection()
+	assert.Equal(t, st.baseCur+1, selRow, "the highlight follows ◇")
+}
+
 // browserHeaders reads the browser table's column-header row.
 func browserHeaders(table *tview.Table) []string {
 	var hs []string

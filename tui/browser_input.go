@@ -17,33 +17,48 @@ func (ui *UI) browserKey(event *tcell.EventKey) *tcell.EventKey {
 	if st == nil {
 		return event
 	}
-
-	//nolint:exhaustive // Why: only the listed keys act; the rest fall through to runes
-	switch event.Key() {
-	case tcell.KeyEsc:
-		ui.browserDiscard(st)
-		return nil
-	case tcell.KeyEnter:
-		ui.applyBrowser(st)
-		return nil
-	case tcell.KeyTab:
-		ui.browserFlipFocus(st)
-		return nil
-	case tcell.KeyUp:
-		ui.browserMoveFocused(st, -1)
-		return nil
-	case tcell.KeyDown:
-		ui.browserMoveFocused(st, +1)
-		return nil
-	case tcell.KeyHome:
-		ui.browserJump(st, true)
-		return nil
-	case tcell.KeyEnd:
-		ui.browserJump(st, false)
+	if ui.browserNamedKey(st, event.Key()) || ui.browserRuneKey(st, event.Rune()) {
 		return nil
 	}
+	return event // unhandled: let tview's Table have it
+}
 
-	switch event.Rune() {
+// browserNamedKey handles the special (non-rune) keys, returning whether it
+// consumed one. Arrows drive the focused cursor; Home/End and PgUp/PgDn/Ctrl-B/
+// Ctrl-F jump and page it (consumed here so tview's Table paging can't move the
+// selection highlight out from under viewCur/baseCur).
+//
+//nolint:exhaustive // Why: only the listed keys act; the rest return false to try runes
+func (ui *UI) browserNamedKey(st *browserState, key tcell.Key) bool {
+	switch key {
+	case tcell.KeyEsc:
+		ui.browserDiscard(st)
+	case tcell.KeyEnter:
+		ui.applyBrowser(st)
+	case tcell.KeyTab:
+		ui.browserFlipFocus(st)
+	case tcell.KeyUp:
+		ui.browserMoveFocused(st, -1)
+	case tcell.KeyDown:
+		ui.browserMoveFocused(st, +1)
+	case tcell.KeyHome:
+		ui.browserJump(st, true)
+	case tcell.KeyEnd:
+		ui.browserJump(st, false)
+	case tcell.KeyPgUp, tcell.KeyCtrlB:
+		ui.browserPage(st, -1)
+	case tcell.KeyPgDn, tcell.KeyCtrlF:
+		ui.browserPage(st, +1)
+	default:
+		return false
+	}
+	return true
+}
+
+// browserRuneKey handles the rune keys (vim navigation and the two-cursor
+// [ ] { } stepping), returning whether it consumed one.
+func (ui *UI) browserRuneKey(st *browserState, r rune) bool {
+	switch r {
 	case 'q':
 		ui.browserDiscard(st)
 	case 'k':
@@ -63,9 +78,9 @@ func (ui *UI) browserKey(event *tcell.EventKey) *tcell.EventKey {
 	case '}':
 		ui.browserMoveBase(st, -1) // newer
 	default:
-		return event
+		return false
 	}
-	return nil
+	return true
 }
 
 // browserMoveFocused steps whichever cursor the arrows currently drive.
@@ -134,6 +149,73 @@ func (ui *UI) browserJump(st *browserState, toNewest bool) {
 		st.viewCur = target
 	}
 	ui.refreshBrowser(st)
+}
+
+// browserPageRows is the page size used before the table has been laid out (its
+// height is not known yet, e.g. in tests).
+const browserPageRows = 10
+
+// browserPageStep is one visible page: the table's inner height less a row of
+// overlap, or the fallback before the table has a size.
+func browserPageStep(table *tview.Table) int {
+	//nolint:dogsled // Why: GetInnerRect returns x,y,w,h and only the height is needed
+	_, _, _, height := table.GetInnerRect()
+	if height <= 1 {
+		return browserPageRows
+	}
+	return height - 1
+}
+
+// browserPage moves the focused cursor by one page (PgUp/PgDn, Ctrl-B/Ctrl-F).
+// tview's Table maps those keys to its own paging, which would move only the
+// selection highlight and leave viewCur/baseCur — the logical cursors Enter acts
+// on — behind; consuming them here keeps highlight and cursor in step.
+func (ui *UI) browserPage(st *browserState, dir int) {
+	if st.focus == focusBaseline {
+		ui.browserPageBase(st, dir, browserPageStep(st.table))
+		return
+	}
+	target := st.viewCur
+	for n := 0; n < browserPageStep(st.table); n++ {
+		next := st.searchSelectable(target, dir, false)
+		if next < 0 {
+			break // clamped at the end
+		}
+		target = next
+	}
+	if target != st.viewCur {
+		st.viewCur = target
+		ui.refreshBrowser(st)
+	}
+}
+
+// browserPageBase pages the ◇ cursor within the covering snapshots. From "none"
+// it first engages the default, then walks up to step ◇-eligible rows, clamped
+// at both ends — paging never clears (that stays the single-step } gesture).
+func (ui *UI) browserPageBase(st *browserState, dir, step int) {
+	if st.cfg.baselineOnly {
+		return
+	}
+	engaged := false
+	if st.baseCur < 0 {
+		st.baseCur = st.baselineDefault()
+		if st.baseCur < 0 {
+			return // nowhere for ◇ to rest
+		}
+		engaged = true
+	}
+	target := st.baseCur
+	for n := 0; n < step; n++ {
+		next := st.searchSelectable(target, dir, true)
+		if next < 0 {
+			break
+		}
+		target = next
+	}
+	if target != st.baseCur || engaged {
+		st.baseCur = target
+		ui.refreshBrowser(st)
+	}
 }
 
 // browserFlipFocus is Tab: swap which cursor the arrows drive. Flipping to ◇

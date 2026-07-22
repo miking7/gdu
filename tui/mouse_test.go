@@ -160,3 +160,21 @@ func TestMouseMove(t *testing.T) {
 	assert.True(t, event != nil)
 	assert.Equal(t, action, tview.MouseMove)
 }
+
+// TestLauncherMouseSwallowedWhileBrowserOpen: the launcher's S door stacks the
+// snapshot browser over the still-present launcher page. A click there must be
+// swallowed, never passed through to the launcher row beneath it (a double-click
+// would otherwise activate that row and could start a scan) nor to the browser
+// table (a single click would desync its selection from the logical cursors).
+func TestLauncherMouseSwallowedWhileBrowserOpen(t *testing.T) {
+	simScreen := testapp.CreateSimScreen()
+	defer simScreen.Fini()
+
+	app := testapp.CreateMockedApp(true)
+	ui := CreateUI(app, simScreen, &bytes.Buffer{}, true, true, false, false)
+	ui.pages.AddPage(launcherPage, tview.NewBox(), true, true)
+	ui.pages.AddPage("snapshotpicker", tview.NewBox(), true, true)
+
+	event, _ := ui.onMouse(tcell.NewEventMouse(0, 0, tcell.Button1, 0), tview.MouseLeftDoubleClick)
+	assert.Nil(t, event, "a click over the browser is swallowed, not routed to the launcher row beneath it")
+}

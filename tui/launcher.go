@@ -504,11 +504,16 @@ func launcherDiskSpan(rows []*launcherRow) (lo, hi int) {
 func (ui *UI) launcherMouse(
 	event *tcell.EventMouse, action tview.MouseAction,
 ) (ev *tcell.EventMouse, ac tview.MouseAction, handled bool) {
-	if ui.pages.HasPage(launcherInputPage) {
-		return nil, action, true
-	}
 	if !ui.pages.HasPage(launcherPage) {
 		return nil, action, false
+	}
+	// A modal page stacked over the launcher owns input: the Other-folder input,
+	// or the snapshot browser opened by S. Swallow launcher-table mouse so a
+	// click never leaks to the row beneath — a double-click would otherwise
+	// activate it (and could start a scan), and a single click would move the
+	// browser's own table selection out from under its logical cursors.
+	if ui.pages.HasPage(launcherInputPage) || ui.pages.HasPage("snapshotpicker") {
+		return nil, action, true
 	}
 	if action == tview.MouseLeftDoubleClick && ui.launcher != nil {
 		row, _ := ui.launcher.table.GetSelection()
