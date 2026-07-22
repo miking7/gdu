@@ -220,6 +220,26 @@ Removed items render inline: parenthesized then-size, `✗` marker, name + `(rem
 - The hint line keeps teaching the scriptable equivalents (`gdu --baseline …`,
   `gdu --snapshot …`) exactly as today.
 
+**Stage-3 review refinements** (decided in the stage-3 code review; recorded so stages
+4–5 stay consistent):
+- **Δ reads uniform `● − row`, including the live row.** When `●` sits on a snapshot, the
+  live row shows `● − live` (negative when the disk has grown since `●` — legible from the
+  timestamps, same convention as E6), *not* the `—` marker. `—` is reserved for genuinely
+  undefined Δ (the `●` cursor's own row, an other-roots row, or a `●` whose folder size is
+  absent/unreadable), kept distinct from the still-filling `…`.
+- **Applying `●` onto an other-roots row clears the baseline.** A baseline must cover the
+  folder being viewed, so opening a non-covering root as the View drops any set/pending `◇`
+  with the E7 flash (`baseline no longer covers this folder — cleared`) rather than
+  rendering an all-uncovered diff — E7's rule reused at the apply seam, a stage early.
+- **Go-live that must spot-rescan warns before dropping a pending `◇`.** The rescan builds a
+  fresh subtree the pending baseline can't ride, so the confirmation carries the second line
+  above. Applying the baseline *after* the rescan completes stays future work (E10-shaped;
+  it reworks scan-completion flows stages 4–5 will touch anyway).
+- **Browser `}` skips over `●`** to a newer covering snapshot when one exists, clearing only
+  when nothing `◇`-eligible is newer. The tree-view `}` (stage 4) instead clears *on* `●`
+  per E4 — a linear timeline can't skip a point, but the browser's free two-cursor surface
+  can, keeping every eligible row reachable.
+
 ### 4.4 Scan screens — the Tab boundary
 
 **Rule: the partial preview belongs to the scan screen's pair, and a partial tree never
@@ -355,6 +375,7 @@ All new/changed user-facing strings in one place (the deliberate-copy discipline
 | Browser ◇ pending | `◇ Baseline  none → 2026-07-14 09:30 (pending)` |
 | Browser section | `other roots (view only)` |
 | Browser hint | `Tab move ●/◇ · [ ] ● · { } ◇ · Enter apply · Esc cancel` |
+| Go-live modal 2nd line (◇ pending) | `The pending baseline change will not be applied.` |
 | Compare footer | `Growth: +… grown · −… shrunk · −… removed (n) · net … · Sorting by: Δ desc` |
 
 Existing copy that must be updated for the new keys: the no-coverage notice (`S` → `B`),
