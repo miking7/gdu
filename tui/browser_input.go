@@ -343,7 +343,14 @@ func (ui *UI) applyBrowser(st *browserState) {
 	case viewRow.kind == browserLiveRow:
 		ui.closeSnapshotPicker()
 		if cfg.goLive != nil {
-			cfg.goLive(applyBase)
+			// Hand go-live the baseline continuation only when a ◇ change is
+			// actually pending, so its spot-rescan path can warn before dropping
+			// one (a rescan builds a fresh tree the continuation can't ride).
+			var pendingBaselineChange func()
+			if baseChanged {
+				pendingBaselineChange = applyBase
+			}
+			cfg.goLive(pendingBaselineChange)
 		}
 	default:
 		l := viewRow.listing // copy; the loader outlives the browser

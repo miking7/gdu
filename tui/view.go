@@ -202,6 +202,11 @@ const signpostDeleteLine = "gdu deletes from the live disk, and this listing may
 // View — refresh reads the live disk, so it signposts the same way as d/e.
 const signpostRefreshLine = "Refreshing reads the live disk — go live here to see current data."
 
+// goLiveDropsBaselineLine warns, in the spot-rescan confirmation, that a baseline
+// change pending from the snapshot browser will not survive the rescan (the
+// rescan builds a fresh subtree the browser's continuation cannot ride).
+const goLiveDropsBaselineLine = "The pending baseline change will not be applied."
+
 // blockMutation intercepts d/e/r on a non-live View with the go-live signpost
 // dialog. It returns true when the action was blocked.
 func (ui *UI) blockMutation(refresh bool) bool {
@@ -261,10 +266,11 @@ func (ui *UI) goLiveHere() {
 // after the instant switch — the browser uses it to set a pending baseline on
 // the freshly live tree. The spot-rescan branch does not run it: applying a
 // baseline against a tree that is still being scanned would render a diff of a
-// partial tree, so a go-live that must rescan drops the pending baseline (the
-// user can set one once the scan completes). While a scan runs there is no live
-// tree to stand on — the in-memory one is being built or grafted — so the flow
-// waits (no concurrent scans).
+// partial tree, so a go-live that must rescan drops the pending baseline — the
+// confirmation warns of this up front (when then is non-nil), and the user can
+// set one again once the scan completes. While a scan runs there is no live tree
+// to stand on — the in-memory one is being built or grafted — so the flow waits
+// (no concurrent scans).
 func (ui *UI) goLiveHereThen(then func()) {
 	folder := ui.currentDirPath
 	sel := ui.selectedItemName()
@@ -284,8 +290,14 @@ func (ui *UI) goLiveHereThen(then func()) {
 		return
 	}
 
+	// A pending baseline change (non-nil then) cannot ride a spot-rescan, so the
+	// confirmation says so before the user commits to the scan.
+	text := fmt.Sprintf("Scan %s live now (this folder only)?", folder)
+	if then != nil {
+		text += "\n" + goLiveDropsBaselineLine
+	}
 	modal := tview.NewModal().
-		SetText(fmt.Sprintf("Scan %s live now (this folder only)?", folder)).
+		SetText(text).
 		AddButtons([]string{"Scan", "Cancel"}).
 		SetDoneFunc(func(buttonIndex int, _ string) {
 			ui.pages.RemovePage("confirm")

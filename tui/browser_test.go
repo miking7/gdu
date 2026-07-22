@@ -558,6 +558,42 @@ func TestBrowserApplyOtherRootDropsBaseline(t *testing.T) {
 	assert.Equal(t, 1, cleared, "the incompatible baseline is cleared")
 }
 
+// TestBrowserGoLivePassesContinuationOnlyWhenBaseChanged: Enter on the live row
+// hands go-live the baseline continuation only when a ◇ change is pending, so the
+// spot-rescan path can warn before dropping one.
+func TestBrowserGoLivePassesContinuationOnlyWhenBaseChanged(t *testing.T) {
+	ui := browserTestUI(t)
+	cov := coveringListingsForTest(2)
+
+	// Case 1: ● moved to live, no ◇ change — go-live gets no continuation.
+	cfg := treeBrowserCfg(focusViewing, cov)
+	cfg.curViewLive = false
+	cfg.curViewKey = cov[0].Key() // ● opens on a snapshot
+	var gotThen1, called1 bool
+	cfg.goLive = func(then func()) { gotThen1 = then != nil; called1 = true }
+	st := ui.newBrowserStateForTest(cfg)
+	ui.browserMoveView(st, -1) // ● → the live row (row 0)
+	require.Equal(t, browserLiveRow, st.rows[st.viewCur].kind)
+	ui.applyBrowser(st)
+	require.True(t, called1, "Enter on the live row runs go-live")
+	assert.False(t, gotThen1, "no ◇ change → go-live gets no continuation")
+
+	// Case 2: a ◇ change is pending — go-live gets the continuation.
+	cfg2 := treeBrowserCfg(focusViewing, cov)
+	cfg2.curViewLive = false
+	cfg2.curViewKey = cov[0].Key()
+	var gotThen2 bool
+	cfg2.goLive = func(then func()) { gotThen2 = then != nil }
+	cfg2.applyBaseline = func(_ *report.SnapshotListing) {}
+	st2 := ui.newBrowserStateForTest(cfg2)
+	ui.browserMoveBase(st2, +1) // engage ◇ (pending change)
+	require.GreaterOrEqual(t, st2.baseCur, 0)
+	ui.browserMoveView(st2, -1) // ● → the live row
+	require.Equal(t, browserLiveRow, st2.rows[st2.viewCur].kind)
+	ui.applyBrowser(st2)
+	assert.True(t, gotThen2, "a pending ◇ change → go-live gets the continuation")
+}
+
 // TestBrowserFillResolvesFolderSizes drives the O door end-to-end through the
 // event loop: the covering snapshot's folder size fills in and its Δ vs the
 // live ● is computed.
