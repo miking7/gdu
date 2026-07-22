@@ -116,9 +116,20 @@ type UI struct {
 	// S picker can mark and pre-select it on reopen — a timestamp alone can't
 	// tell same-instant snapshots of different roots apart. Zero when no
 	// snapshot-derived baseline is set.
-	baselineKey  parquet.SnapshotKey
-	diffReverse  bool
-	snapshotsDir string // archive dir the S/O pickers list snapshots from
+	baselineKey parquet.SnapshotKey
+	// diffHidden is the Tab peek toggle (axis B): with a baseline set the tree
+	// still renders plain rows when true. inDiffMode() (a baseline exists) drives
+	// the header's two lines and the Esc ladder; renderingDelta() (a baseline
+	// exists AND not hidden) drives whether the Δ column is actually drawn.
+	diffHidden bool
+	// Compare view keeps its own (sortBy, order) so plain and compare each
+	// remember how they were last sorted — Tab flips between two renderings that
+	// are each left exactly as you sorted them. Session-scoped: it survives
+	// baseline clear/set cycles and is never persisted. Starts at Δ descending
+	// (biggest growth first).
+	diffSortBy    string
+	diffSortOrder string
+	snapshotsDir  string // archive dir the S/O pickers list snapshots from
 	// View/Baseline state: every screen shows a View, optionally against a
 	// Baseline. currentView is what's shown, liveView the in-memory live tree
 	// (kept while snapshot Views are shown), returnView where Esc lands — the
@@ -247,6 +258,8 @@ func CreateUI(
 		currentItemNameMaxLen:   70,
 		defaultSortBy:           "size",
 		defaultSortOrder:        "desc",
+		diffSortBy:              deltaSortKey,
+		diffSortOrder:           descOrder,
 		ignoredRows:             make(map[int]struct{}),
 		markedRows:              make(map[int]struct{}),
 		exportName:              "export.json",

@@ -12,6 +12,10 @@ const (
 	sizeSortKey      = "size"
 	itemCountSortKey = "itemCount"
 	mtimeSortKey     = "mtime"
+	// deltaSortKey sorts the compare view by growth versus the baseline. It has
+	// no fs.SortBy equivalent (the delta is computed against the baseline, not a
+	// property of the item), so the compare renderer sorts its own rows by it.
+	deltaSortKey = "delta"
 
 	ascOrder  = "asc"
 	descOrder = "desc"
@@ -30,15 +34,23 @@ func (ui *UI) SetDefaultSorting(by, order string) {
 func (ui *UI) setSorting(newOrder string) {
 	ui.markedRows = make(map[int]struct{})
 
-	if newOrder == ui.sortBy {
-		if ui.sortOrder == ascOrder {
-			ui.sortOrder = descOrder
+	// Per-mode memory: the compare view keeps its own (sortBy, order) so plain
+	// and compare each stay exactly as last sorted across a Tab toggle. Re-press
+	// flips direction; a new key starts ascending (the app-wide convention).
+	by, order := &ui.sortBy, &ui.sortOrder
+	if ui.renderingDelta() {
+		by, order = &ui.diffSortBy, &ui.diffSortOrder
+	}
+
+	if newOrder == *by {
+		if *order == ascOrder {
+			*order = descOrder
 		} else {
-			ui.sortOrder = ascOrder
+			*order = ascOrder
 		}
 	} else {
-		ui.sortBy = newOrder
-		ui.sortOrder = ascOrder
+		*by = newOrder
+		*order = ascOrder
 	}
 
 	if ui.currentDir != nil {

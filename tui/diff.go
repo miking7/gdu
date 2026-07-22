@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/maruel/natural"
 	"github.com/rivo/tview"
 	log "github.com/sirupsen/logrus"
 
@@ -32,23 +32,35 @@ const (
 	diffDeltaWidth = 14
 
 	minusSign = "−" // U+2212, the sign shown on negative (shrink/removed) deltas
+
+	// Column widths formatFileRow draws, mirrored here so a removed row (which
+	// has no live item to format) lines its Δ column up under the present rows'.
+	pctColWidth   = 7  // formatUsagePercentage: " %5.1f%%"
+	newBarWidth   = 12 // getUsageGraph
+	oldBarWidth   = 14 // " " + getUsageGraphOld + " "
+	countColWidth = 12 // "%11s "
+	mtimeColWidth = 20 // "2006-01-02 15:04:05" + " "
+	markColWidth  = 2  // "✓ " / "  "
+	// diffSizeColWidth is the visible width of formatFileRow's size column: its
+	// %15s field always embeds a 5-cell color tag ("[-::]"), so ten cells show.
+	diffSizeColWidth = 10
 )
 
-// diffRow is one line in the diff view: either a present item (item != nil)
-// carrying its delta versus the baseline, or a baseline entry removed since
-// (removed != nil, item nil).
+// diffRow is one line in the compare view: either a present item (item != nil)
+// carrying its signed delta versus the baseline, or a baseline entry removed
+// since (removed != nil, item nil, delta = −then-size).
 type diffRow struct {
 	item    fs.Item
 	removed *analyze.RemovedEntry
 	delta   int64
-	cat     analyze.DiffCategory
 }
 
-// SetBaseline enters diff mode against b (the snapshot identified by info) and
-// re-renders the current directory sorted by growth. A nil b is a no-op; use
-// clearBaseline to leave diff mode. Setting a baseline fills the header's
-// Baseline slot and records the snapshot's full identity so the S picker can
-// mark it as active.
+// SetBaseline enters compare mode against b (the snapshot identified by info)
+// and re-renders the current directory. A nil b is a no-op; use clearBaseline
+// to leave. Setting a baseline fills the header's Baseline slot, records the
+// snapshot's full identity so the picker can mark it as active, and shows the Δ
+// column (Tab hides it). The compare sort is deliberately left untouched — it is
+// session-scoped and survives baseline set/clear cycles.
 func (ui *UI) SetBaseline(b *analyze.Baseline, info *parquet.SnapshotInfo) {
 	if b == nil {
 		return
@@ -56,14 +68,14 @@ func (ui *UI) SetBaseline(b *analyze.Baseline, info *parquet.SnapshotInfo) {
 	ui.baseline = b
 	ui.baselineTs = info.ScanTs
 	ui.baselineKey = info.Key()
-	ui.diffReverse = false
+	ui.diffHidden = false
 	ui.updateHeader()
 	if ui.currentDir != nil {
 		ui.showDir()
 	}
 }
 
-// clearBaseline leaves diff mode and restores the normal view.
+// clearBaseline leaves compare mode and restores the normal view.
 func (ui *UI) clearBaseline() {
 	ui.baseline = nil
 	ui.baselineTs = time.Time{}
@@ -74,22 +86,23 @@ func (ui *UI) clearBaseline() {
 	}
 }
 
+// inDiffMode reports whether a baseline is set (axis A). It drives the header's
+// two lines and the Esc ladder — everything that must state a comparison
+// exists — regardless of whether the Δ column is currently drawn.
 func (ui *UI) inDiffMode() bool { return ui.baseline != nil }
 
-// setDiffSort flips the growth-sort direction: '>' puts the biggest growth on
-// top (default), '<' the biggest shrink. A no-op outside diff mode.
-func (ui *UI) setDiffSort(reverse bool) {
-	if !ui.inDiffMode() {
-		return
-	}
-	ui.diffReverse = reverse
-	ui.showDir()
-}
+// renderingDelta reports whether the Δ column should actually be drawn: a
+// baseline is set and the Tab peek toggle has not hidden it. When false the tree
+// renders exactly as the plain view even though the baseline persists, so Tab
+// flips between the two renderings without touching the baseline.
+func (ui *UI) renderingDelta() bool { return ui.inDiffMode() && !ui.diffHidden }
 
-// showDiffDir renders the current directory in diff mode: a muted size column, a
-// signed delta column with per-category markers, removed items shown inline, and
-// a footer reconciling grown/shrunk/removed/net. It mirrors showDir's single
-// table-build pass but sorts by growth rather than by an fs.SortBy.
+// showDiffDir renders the current directory as the normal table with a Δ column
+// appended: the same flag/size/percentage/bar/count/mtime/mark anatomy as the
+// plain view (present rows go through formatFileRow, which appends the Δ field),
+// plus removed-since-baseline rows shown inline, and a footer reconciling
+// grown/shrunk/removed/net. The bar stays usage-scaled — it is the same bar as
+// the plain view; the Δ ranking comes from the sort and the signed numbers.
 //
 //nolint:funlen // Why: one cohesive table-build pass, matching showDir
 func (ui *UI) showDiffDir() {
@@ -104,27 +117,38 @@ func (ui *UI) showDiffDir() {
 		" ---" + ui.previewLabelSuffix()).SetDynamicColors(true)
 
 	ui.table.Clear()
-	rowIndex := ui.setDiffParentRow()
+	rowIndex := ui.setParentRow()
 
 	unlock := ui.currentDir.RLock()
 	defer unlock()
 
 	rows := ui.buildDiffRows()
 
-	var maxAbs, grown, shrunk, removedTotal int64
-	var removedCount int
+	// Bar scale: the same rule as the plain view, over the present rows only —
+	// removed items have no live size to contribute.
+	var maxUsage, maxSize int64
+	idx := rowIndex
 	for i := range rows {
-		if a := absInt64(rows[i].delta); a > maxAbs {
-			maxAbs = a
+		if rows[i].removed == nil {
+			if _, ignored := ui.ignoredRows[idx]; !ignored {
+				ui.accumulateBarMax(rows[i].item, &maxUsage, &maxSize)
+			}
 		}
+		idx++
 	}
 
+	var grown, shrunk, removedTotal int64
+	var removedCount int
+	idx = rowIndex
 	for i := range rows {
 		r := &rows[i]
+		_, ignored := ui.ignoredRows[idx]
 		switch {
 		case r.removed != nil:
 			removedTotal += r.removed.Size
 			removedCount++
+		case ignored:
+			// ignored rows are excluded from the reconciliation, as from the totals
 		case r.delta > 0:
 			grown += r.delta
 		case r.delta < 0:
@@ -132,15 +156,17 @@ func (ui *UI) showDiffDir() {
 		}
 
 		var cell *tview.TableCell
+		marked := false
 		if r.removed != nil {
-			cell = tview.NewTableCell(ui.formatRemovedRow(r.removed, maxAbs))
+			cell = tview.NewTableCell(ui.formatRemovedRow(r.removed))
 		} else {
-			cell = tview.NewTableCell(ui.formatDiffRow(r.item, r.delta, r.cat, maxAbs))
+			_, marked = ui.markedRows[idx]
+			cell = tview.NewTableCell(ui.formatFileRow(r.item, maxUsage, maxSize, marked, ignored))
 			cell.SetReference(r.item)
 		}
-		cell.SetStyle(tcell.Style{}.Foreground(tcell.ColorDefault))
-		ui.table.SetCell(rowIndex, 0, cell)
-		rowIndex++
+		ui.applyRowStyle(cell, marked, ignored)
+		ui.table.SetCell(idx, 0, cell)
+		idx++
 	}
 
 	ui.setDiffFooter(grown, shrunk, removedTotal, removedCount)
@@ -152,27 +178,9 @@ func (ui *UI) showDiffDir() {
 	}
 }
 
-// setDiffParentRow adds the "/.." navigation row when not at the top dir and
-// returns the next free row index.
-func (ui *UI) setDiffParentRow() int {
-	if ui.currentDirPath == ui.topDirPath {
-		return 0
-	}
-	cell := tview.NewTableCell("                         [::b]/..")
-	var parent fs.Item
-	if ui.collapsePath {
-		parent = findCollapsedParent(ui.currentDir)
-	} else {
-		parent = ui.currentDir.GetParent()
-	}
-	cell.SetReference(parent)
-	cell.SetStyle(tcell.Style{}.Foreground(tcell.ColorDefault))
-	ui.table.SetCell(0, 0, cell)
-	return 1
-}
-
-// buildDiffRows gathers the visible present children (with their deltas) plus the
-// baseline items removed under this directory, then sorts them by growth.
+// buildDiffRows gathers the visible present children (with their deltas) plus
+// the baseline items removed under this directory, then orders them by the
+// compare view's own sort.
 func (ui *UI) buildDiffRows() []diffRow {
 	var rows []diffRow
 	present := make(map[string]struct{})
@@ -182,8 +190,8 @@ func (ui *UI) buildDiffRows() []diffRow {
 		if !ui.diffRowVisible(item.GetName(), item.IsDir()) {
 			continue
 		}
-		delta, cat := ui.baseline.Delta(item)
-		rows = append(rows, diffRow{item: item, delta: delta, cat: cat})
+		delta, _ := ui.baseline.Delta(item)
+		rows = append(rows, diffRow{item: item, delta: delta})
 	}
 
 	for _, e := range ui.baseline.RemovedUnder(ui.currentDirPath, present) {
@@ -194,17 +202,74 @@ func (ui *UI) buildDiffRows() []diffRow {
 		rows = append(rows, diffRow{removed: &entry, delta: -entry.Size})
 	}
 
-	sort.SliceStable(rows, func(i, j int) bool {
-		if ui.diffReverse {
-			return rows[i].delta < rows[j].delta
-		}
-		return rows[i].delta > rows[j].delta
-	})
+	ui.sortDiffRows(rows)
 	return rows
 }
 
+// sortDiffRows orders the compare rows by the compare view's (sortBy, order).
+// Removed rows carry a synthetic delta of −(their then-size), so a Δ sort
+// interleaves them honestly; the other keys read a removed row's baseline size
+// and name, and treat its count and mtime as unknown.
+func (ui *UI) sortDiffRows(rows []diffRow) {
+	by := ui.diffSortBy
+	desc := ui.diffSortOrder == descOrder
+	sort.SliceStable(rows, func(i, j int) bool {
+		if desc {
+			return ui.diffRowLess(&rows[j], &rows[i], by)
+		}
+		return ui.diffRowLess(&rows[i], &rows[j], by)
+	})
+}
+
+// diffRowLess reports whether a sorts before b in ascending order for the key.
+func (ui *UI) diffRowLess(a, b *diffRow, by string) bool {
+	switch by {
+	case nameSortKey:
+		return natural.Less(diffRowName(a), diffRowName(b))
+	case sizeSortKey:
+		return ui.diffRowSize(a) < ui.diffRowSize(b)
+	case itemCountSortKey:
+		return diffRowCount(a) < diffRowCount(b)
+	case mtimeSortKey:
+		return diffRowMtime(a).Before(diffRowMtime(b))
+	default: // deltaSortKey
+		return a.delta < b.delta
+	}
+}
+
+func diffRowName(r *diffRow) string {
+	if r.removed != nil {
+		return r.removed.Name
+	}
+	return r.item.GetName()
+}
+
+func (ui *UI) diffRowSize(r *diffRow) int64 {
+	if r.removed != nil {
+		return r.removed.Size
+	}
+	if ui.ShowApparentSize {
+		return r.item.GetSize()
+	}
+	return r.item.GetUsage()
+}
+
+func diffRowCount(r *diffRow) int64 {
+	if r.removed != nil {
+		return 0
+	}
+	return r.item.GetItemCount()
+}
+
+func diffRowMtime(r *diffRow) time.Time {
+	if r.removed != nil {
+		return time.Time{}
+	}
+	return r.item.GetMtime()
+}
+
 // diffRowVisible applies the active name and type filters, so filtering works in
-// diff mode exactly as in normal browsing.
+// compare mode exactly as in normal browsing.
 func (ui *UI) diffRowVisible(name string, isDir bool) bool {
 	if ui.filterValue != "" &&
 		!strings.Contains(strings.ToLower(name), strings.ToLower(ui.filterValue)) {
@@ -213,44 +278,39 @@ func (ui *UI) diffRowVisible(name string, isDir bool) bool {
 	return ui.matchesTypeFilter(name, isDir)
 }
 
-// formatDiffRow renders a present item: flag, muted current size, the signed
-// delta with its marker, a bar scaled to |delta|, and the (dir-colored) name.
-func (ui *UI) formatDiffRow(item fs.Item, delta int64, cat analyze.DiffCategory, maxAbs int64) string {
-	row := string(item.GetFlag())
-	row += ui.mutedSizeCol(item.GetUsage())
-	row += " " + ui.deltaField(delta, cat)
-	row += ui.diffBar(absInt64(delta), maxAbs)
-
-	if item.IsDir() {
-		if ui.UseColors {
-			row += fmt.Sprintf("[%s::b]/", ui.resultRow.DirectoryColor)
-		} else {
-			row += defaultColorBold + "/"
-		}
+// deltaColumn is the compare view's appended Δ field: the marker glyph and
+// signed growth of item versus the baseline, in a fixed-width cell so the names
+// still line up. It is empty in every non-compare rendering, so the plain table
+// (and a compare view with Δ toggled off) is byte-for-byte unchanged.
+func (ui *UI) deltaColumn(item fs.Item) string {
+	if !ui.renderingDelta() {
+		return ""
 	}
-	row += tview.Escape(item.GetName())
-	return row
+	delta, cat := ui.baseline.Delta(item)
+	return " " + ui.deltaField(delta, cat) + " "
 }
 
 // formatRemovedRow renders a baseline item that no longer exists: its size shown
-// as a parenthesized "(then)" value, a violet ✗ delta, and a struck-through name.
-func (ui *UI) formatRemovedRow(e *analyze.RemovedEntry, maxAbs int64) string {
+// as a parenthesized "(then)" value, an em dash where the live bar would be, a
+// violet ✗ delta, and a struck-through name. It reproduces formatFileRow's
+// column widths so its Δ column lines up under the present rows'.
+func (ui *UI) formatRemovedRow(e *analyze.RemovedEntry) string {
 	then := "(" + ui.plainSize(e.Size) + ")"
-	row := " "
+	row := " " // flag column: a removed item carries none
 	if ui.UseColors {
-		row += fmt.Sprintf("[%s::b]%15s", diffSizeMuteColor, then)
+		row += fmt.Sprintf("[%s::b]%*s", diffSizeMuteColor, diffSizeColWidth, then)
 	} else {
-		row += fmt.Sprintf("%s%15s", defaultColorBold, then)
+		row += fmt.Sprintf("%s%*s", defaultColorBold, diffSizeColWidth, then)
 	}
+
+	row += ui.diffMiddleBlank()
 
 	body := padCells(fmt.Sprintf("✗ −%s", ui.plainSize(e.Size)), diffDeltaWidth)
 	if ui.UseColors {
-		row += " [" + diffRemovedColor + "::b]" + body
+		row += " [" + diffRemovedColor + "::b]" + body + " "
 	} else {
-		row += " " + defaultColorBold + body
+		row += " " + defaultColorBold + body + " "
 	}
-
-	row += ui.diffBar(e.Size, maxAbs)
 
 	name := e.Name
 	if e.IsDir {
@@ -265,14 +325,30 @@ func (ui *UI) formatRemovedRow(e *analyze.RemovedEntry, maxAbs int64) string {
 	return row
 }
 
-// mutedSizeCol renders the current size in a neutral color, so the warm/cool
-// delta color owns the eye in diff mode. Width matches formatFileRow's column.
-func (ui *UI) mutedSizeCol(bytes int64) string {
-	s := fmt.Sprintf("%15s", ui.plainSize(bytes))
-	if ui.UseColors {
-		return "[" + diffSizeMuteColor + "::b]" + s
+// diffMiddleBlank reproduces the width of the percentage + bar (+ optional
+// count/mtime/mark) columns that formatFileRow draws, filled with blanks and a
+// single em dash where the bar would be — a removed item has no live size to
+// scale a bar from. It inherits the muted color of the size column before it.
+func (ui *UI) diffMiddleBlank() string {
+	var b strings.Builder
+	if ui.showBarPercentage {
+		b.WriteString(strings.Repeat(" ", pctColWidth))
 	}
-	return defaultColorBold + s
+	barWidth := newBarWidth
+	if ui.useOldSizeBar {
+		barWidth = oldBarWidth
+	}
+	b.WriteString(padCells("  —", barWidth))
+	if ui.showItemCount {
+		b.WriteString(strings.Repeat(" ", countColWidth))
+	}
+	if ui.showMtime {
+		b.WriteString(strings.Repeat(" ", mtimeColWidth))
+	}
+	if len(ui.markedRows) > 0 {
+		b.WriteString(strings.Repeat(" ", markColWidth))
+	}
+	return b.String()
 }
 
 // deltaField renders the marker glyph and signed magnitude for one category,
@@ -297,21 +373,8 @@ func (ui *UI) deltaField(delta int64, cat analyze.DiffCategory) string {
 	return defaultColorBold + body
 }
 
-// diffBar draws the usage bar scaled to |delta| relative to the largest change
-// in view, reusing the normal block-glyph graph.
-func (ui *UI) diffBar(mag, maxAbs int64) string {
-	part := 0
-	if maxAbs > 0 {
-		part = int(mag * 100 / maxAbs)
-	}
-	if ui.useOldSizeBar {
-		return " " + getUsageGraphOld(part) + " "
-	}
-	return getUsageGraph(part)
-}
-
 // setDiffFooter writes the tree-wide reconciliation for the current directory:
-// how much grew, shrank and was removed, and the net change.
+// how much grew, shrank and was removed, the net change, and the active sort.
 func (ui *UI) setDiffFooter(grown, shrunk, removedTotal int64, removedCount int) {
 	var numColor, txtColor string
 	// growTag/shrinkTag/removedTag fall back to the plain number style so the
@@ -333,21 +396,26 @@ func (ui *UI) setDiffFooter(grown, shrunk, removedTotal int64, removedCount int)
 	if net < 0 {
 		netSign = minusSign
 	}
-	dir := "desc"
-	if ui.diffReverse {
-		dir = "asc"
-	}
 
 	text := txtColor + " Growth: " +
-		growTag + "+" + ui.plainSize(grown) + txtColor + " grown  " +
+		growTag + "+" + ui.plainSize(grown) + txtColor + " grown · " +
 		shrinkTag + minusSign + ui.plainSize(shrunk) + txtColor + " shrunk"
 	if removedCount > 0 {
-		text += "  " + removedTag + minusSign + ui.plainSize(removedTotal) +
+		text += txtColor + " · " + removedTag + minusSign + ui.plainSize(removedTotal) +
 			txtColor + fmt.Sprintf(" removed (%d)", removedCount)
 	}
-	text += txtColor + "  net " + numColor + netSign + ui.plainSize(absInt64(net)) +
-		txtColor + "  Sort: growth " + dir
+	text += txtColor + " · net " + numColor + netSign + ui.plainSize(absInt64(net)) +
+		txtColor + " · Sorting by: " + ui.compareSortLabel() + " " + ui.diffSortOrder
 	ui.setFooter(text)
+}
+
+// compareSortLabel names the compare view's active sort key for the footer: "Δ"
+// for the growth sort, otherwise the same key the plain footer prints.
+func (ui *UI) compareSortLabel() string {
+	if ui.diffSortBy == deltaSortKey {
+		return "Δ"
+	}
+	return ui.diffSortBy
 }
 
 // plainSize formats a byte count with no color tags, honoring the SI/binary

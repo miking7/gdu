@@ -29,7 +29,8 @@ var (
 History — view & compare (snapshot views are read-only; d/e offer to go live):
                [::b][     [white:black:-]Step to an older snapshot of this folder
                [::b]]     [white:black:-]Step to a newer snapshot; at the newest, back to live
-               [::b]S     [white:black:-]Compare: pick a baseline snapshot (then >/< sort growth)
+               [::b]S     [white:black:-]Compare: pick a baseline snapshot to measure growth against
+             [::b]Tab     [white:black:-]With a baseline set, toggle the growth (Δ) column on/off
                [::b]O     [white:black:-]Open any archived snapshot as the view
              [::b]Esc     [white:black:-]Clear the baseline, else return where you started
 
@@ -51,6 +52,7 @@ Sort & display:
                [::b]s     [white:black:-]Sort by size (asc/desc)
                [::b]C     [white:black:-]Sort by file count (asc/desc)
                [::b]M     [white:black:-]Sort by mtime (asc/desc)
+               [::b]D     [white:black:-]Sort by growth since the baseline (Δ; compare view only)
                [::b]a     [white:black:-]Toggle between showing disk usage and apparent size
                [::b]B     [white:black:-]Toggle bar alignment to biggest file or directory
                [::b]c     [white:black:-]Show/hide file count
@@ -69,7 +71,7 @@ func (ui *UI) previewLabelSuffix() string {
 
 //nolint:funlen,gocyclo // Why: complex single-pass table build
 func (ui *UI) showDir() {
-	if ui.inDiffMode() {
+	if ui.renderingDelta() {
 		ui.showDiffDir()
 		return
 	}
@@ -100,27 +102,7 @@ func (ui *UI) showDir() {
 
 	ui.table.Clear()
 
-	rowIndex := 0
-	if ui.currentDirPath != ui.topDirPath {
-		prefix := "                         "
-		if len(ui.markedRows) > 0 {
-			prefix += "  "
-		}
-
-		cell := tview.NewTableCell(prefix + "[::b]/..")
-
-		// Use the collapsed parent logic to handle navigation back through collapsed paths
-		var collapsedParent fs.Item
-		if ui.collapsePath {
-			collapsedParent = findCollapsedParent(ui.currentDir)
-		} else {
-			collapsedParent = ui.currentDir.GetParent()
-		}
-		cell.SetReference(collapsedParent)
-		cell.SetStyle(tcell.Style{}.Foreground(tcell.ColorDefault))
-		ui.table.SetCell(0, 0, cell)
-		rowIndex++
-	}
+	rowIndex := ui.setParentRow()
 
 	sortBy, sortOrder := ui.getSortParams()
 
@@ -135,18 +117,7 @@ func (ui *UI) showDir() {
 			i++
 			continue
 		}
-
-		if ui.ShowRelativeSize {
-			if item.GetUsage() > maxUsage {
-				maxUsage = item.GetUsage()
-			}
-			if item.GetSize() > maxSize {
-				maxSize = item.GetSize()
-			}
-		} else {
-			maxSize += item.GetSize()
-			maxUsage += item.GetUsage()
-		}
+		ui.accumulateBarMax(item, &maxUsage, &maxSize)
 		i++
 	}
 
@@ -199,17 +170,7 @@ func (ui *UI) showDir() {
 		}
 
 		cell.SetReference(reference)
-
-		switch {
-		case ignored:
-			cell.SetStyle(tcell.Style{}.Foreground(tview.Styles.SecondaryTextColor))
-		case marked:
-			cell.SetStyle(tcell.Style{}.Foreground(ui.markedTextColor))
-			cell.SetBackgroundColor(ui.markedBackgroundColor)
-		default:
-			cell.SetStyle(tcell.Style{}.Foreground(tcell.ColorDefault))
-		}
-
+		ui.applyRowStyle(cell, marked, ignored)
 		ui.table.SetCell(rowIndex, 0, cell)
 		rowIndex++
 	}
@@ -266,6 +227,64 @@ func (ui *UI) showDir() {
 
 	if !ui.filtering && !ui.typeFiltering {
 		ui.app.SetFocus(ui.table)
+	}
+}
+
+// setParentRow adds the "/.." navigation row when not at the top dir and
+// returns the next free row index. Shared by the plain and compare views so the
+// row's mark-column offset stays identical between them.
+func (ui *UI) setParentRow() int {
+	if ui.currentDirPath == ui.topDirPath {
+		return 0
+	}
+	prefix := "                         "
+	if len(ui.markedRows) > 0 {
+		prefix += "  "
+	}
+	cell := tview.NewTableCell(prefix + "[::b]/..")
+
+	// Use the collapsed parent logic to handle navigation back through collapsed paths
+	var collapsedParent fs.Item
+	if ui.collapsePath {
+		collapsedParent = findCollapsedParent(ui.currentDir)
+	} else {
+		collapsedParent = ui.currentDir.GetParent()
+	}
+	cell.SetReference(collapsedParent)
+	cell.SetStyle(tcell.Style{}.Foreground(tcell.ColorDefault))
+	ui.table.SetCell(0, 0, cell)
+	return 1
+}
+
+// accumulateBarMax folds one item into the running bar-scale maxima, following
+// the same rule for both views: relative to the biggest item (--relative), else
+// relative to the directory total. Shared so the compare view's usage bar is
+// scaled identically to the plain view's.
+func (ui *UI) accumulateBarMax(item fs.Item, maxUsage, maxSize *int64) {
+	if ui.ShowRelativeSize {
+		if item.GetUsage() > *maxUsage {
+			*maxUsage = item.GetUsage()
+		}
+		if item.GetSize() > *maxSize {
+			*maxSize = item.GetSize()
+		}
+	} else {
+		*maxSize += item.GetSize()
+		*maxUsage += item.GetUsage()
+	}
+}
+
+// applyRowStyle sets a table cell's ignored/marked/default styling — shared by
+// the plain and compare views so a marked or ignored row looks the same in both.
+func (ui *UI) applyRowStyle(cell *tview.TableCell, marked, ignored bool) {
+	switch {
+	case ignored:
+		cell.SetStyle(tcell.Style{}.Foreground(tview.Styles.SecondaryTextColor))
+	case marked:
+		cell.SetStyle(tcell.Style{}.Foreground(ui.markedTextColor))
+		cell.SetBackgroundColor(ui.markedBackgroundColor)
+	default:
+		cell.SetStyle(tcell.Style{}.Foreground(tcell.ColorDefault))
 	}
 }
 

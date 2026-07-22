@@ -139,16 +139,21 @@ func (ui *UI) viewingWhat() string {
 }
 
 // baselineLine renders the Baseline slot, or "" when no baseline is set. The
-// tail names the one view toggle (Δ rendering) so the comparison is never
-// silently alive, then the keys that act on it.
+// tail names the one view toggle (Δ rendering) and how to flip it, so the
+// comparison is never silently alive and its state is always readable.
 func (ui *UI) baselineLine() string {
 	if !ui.inDiffMode() {
 		return ""
 	}
-	return fmt.Sprintf(" %s Baseline  %s (%s ago) — Δ shown · > < sort · Esc clear",
+	tail := "Δ shown · Tab plain"
+	if ui.diffHidden {
+		tail = "Δ hidden · Tab compare"
+	}
+	return fmt.Sprintf(" %s Baseline  %s (%s ago) — %s · Esc clear",
 		ui.baselineGlyph(),
 		ui.baselineTs.Local().Format(headerTimeLayout),
-		humanAge(time.Since(ui.baselineTs)))
+		humanAge(time.Since(ui.baselineTs)),
+		tail)
 }
 
 // setHeaderHeight resizes the grid's header row (1↔2 lines), preserving the

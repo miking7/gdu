@@ -283,7 +283,7 @@ func TestHeaderStates(t *testing.T) {
 	assert.Contains(t, lines[1], "◇ Baseline  "+ts1.Local().Format(headerTimeLayout))
 	assert.Contains(t, lines[1], "ago)", "the Baseline line carries the snapshot's relative age")
 	assert.Contains(t, lines[1], "Δ shown")
-	assert.Contains(t, lines[1], "> < sort · Esc clear")
+	assert.Contains(t, lines[1], "Tab plain · Esc clear")
 	assert.Equal(t, 2, ui.headerLines)
 
 	// Live + Baseline: the Viewing line comes back so the screen states both

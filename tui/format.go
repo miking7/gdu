@@ -108,6 +108,10 @@ func (ui *UI) formatFileRow(item fs.Item, maxUsage, maxSize int64, marked, ignor
 		row += " "
 	}
 
+	// In the compare view every present row gains a signed Δ column here, right
+	// before the name; empty otherwise, so the plain table is unchanged.
+	row += ui.deltaColumn(item)
+
 	if item.IsDir() {
 		if ui.UseColors && !marked && !ignored {
 			row += fmt.Sprintf("[%s::b]/", ui.resultRow.DirectoryColor)

@@ -368,6 +368,13 @@ func (ui *UI) handleMainActions(key *tcell.EventKey) *tcell.EventKey {
 		}
 		return key
 	}
+	// Tab is the tree screen's counterpart toggle: plain ↔ Δ. The filter bar
+	// owns Tab when open (E11) — handleFiltering runs earlier and consumes it —
+	// so reaching here means no filter bar, and Tab flips the compare rendering.
+	if key.Key() == tcell.KeyTab {
+		ui.handleTabToggle()
+		return nil
+	}
 	switch key.Rune() {
 	case 'd', 'e':
 		if ui.isInArchive() {
@@ -426,18 +433,51 @@ func (ui *UI) handleMainActions(key *tcell.EventKey) *tcell.EventKey {
 	case '[', ']':
 		ui.handleStepKey(key.Rune())
 		return nil
-	case '>':
-		if ui.inDiffMode() {
-			ui.setDiffSort(false)
-			return nil
+	case 'D':
+		// D joins s/n/C/M as a sort key, but only the compare view has a Δ to
+		// sort by; elsewhere it teaches the way into a comparison.
+		if ui.renderingDelta() {
+			ui.setSorting(deltaSortKey)
+		} else {
+			ui.headerNoticeNow(ui.noDeltaSortNotice())
 		}
-	case '<':
-		if ui.inDiffMode() {
-			ui.setDiffSort(true)
-			return nil
-		}
+		return nil
 	}
 	return key
+}
+
+// Teach-flash copy for the compare gestures when there is nothing to compare.
+// Transitional: it names today's key for choosing a baseline (S). Stage 4
+// rebinds the compare-previous/choose keys and rewrites this.
+const noBaselineNotice = "no baseline set — S to compare"
+
+// handleTabToggle flips the compare view's Δ rendering on and off (axis B), the
+// tree screen's counterpart pair. With no baseline set there is nothing to
+// compare, so it teaches the key that sets one. The filter-bar precedence (E11)
+// is handled upstream in handleFiltering, which runs before this.
+func (ui *UI) handleTabToggle() {
+	if !ui.inDiffMode() {
+		ui.headerNoticeNow(noBaselineNotice)
+		return
+	}
+	sel := ui.selectedItemName()
+	ui.diffHidden = !ui.diffHidden
+	ui.updateHeader()
+	if ui.currentDir != nil {
+		ui.showDir()
+		if sel != "" {
+			ui.selectItemByName(sel)
+		}
+	}
+}
+
+// noDeltaSortNotice explains why D did nothing: either no baseline is set, or
+// one is set but the Δ column is toggled off (so there is no visible Δ to sort).
+func (ui *UI) noDeltaSortNotice() string {
+	if ui.inDiffMode() {
+		return "Δ hidden — Tab to compare"
+	}
+	return noBaselineNotice
 }
 
 // handleStepKey maps the timeline keys to steps: `[` older, `]` newer.
