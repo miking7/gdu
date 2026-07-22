@@ -41,7 +41,12 @@ func formatUsagePercentage(part float64) string {
 	return fmt.Sprintf(" %5.1f%%", part)
 }
 
-func (ui *UI) formatFileRow(item fs.Item, maxUsage, maxSize int64, marked, ignored bool) string {
+// formatFileRow renders one present item's table row. deltaField is the compare
+// view's appended Δ column, inserted just before the name; it is "" in the plain
+// view, so that rendering is byte-for-byte unchanged. Keeping it a parameter
+// (computed by the caller, which already holds the delta) keeps this formatter
+// baseline-agnostic and avoids re-resolving the item's delta at render time.
+func (ui *UI) formatFileRow(item fs.Item, maxUsage, maxSize int64, marked, ignored bool, deltaField string) string {
 	partFloat := ui.getUsagePart(item, maxUsage, maxSize, ignored)
 	part := int(partFloat)
 
@@ -110,7 +115,7 @@ func (ui *UI) formatFileRow(item fs.Item, maxUsage, maxSize int64, marked, ignor
 
 	// In the compare view every present row gains a signed Δ column here, right
 	// before the name; empty otherwise, so the plain table is unchanged.
-	row += ui.deltaColumn(item)
+	row += deltaField
 
 	if item.IsDir() {
 		if ui.UseColors && !marked && !ignored {

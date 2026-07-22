@@ -160,12 +160,12 @@ func (ui *UI) showDir() {
 				reference = collapsedPath.DeepestDir
 			} else {
 				// Regular directory formatting
-				cell = tview.NewTableCell(ui.formatFileRow(item, maxUsage, maxSize, marked, ignored))
+				cell = tview.NewTableCell(ui.formatFileRow(item, maxUsage, maxSize, marked, ignored, ""))
 				reference = item
 			}
 		} else {
 			// Regular file formatting
-			cell = tview.NewTableCell(ui.formatFileRow(item, maxUsage, maxSize, marked, ignored))
+			cell = tview.NewTableCell(ui.formatFileRow(item, maxUsage, maxSize, marked, ignored, ""))
 			reference = item
 		}
 

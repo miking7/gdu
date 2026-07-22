@@ -117,10 +117,10 @@ type UI struct {
 	// tell same-instant snapshots of different roots apart. Zero when no
 	// snapshot-derived baseline is set.
 	baselineKey parquet.SnapshotKey
-	// diffHidden is the Tab peek toggle (axis B): with a baseline set the tree
-	// still renders plain rows when true. inDiffMode() (a baseline exists) drives
-	// the header's two lines and the Esc ladder; renderingDelta() (a baseline
-	// exists AND not hidden) drives whether the Δ column is actually drawn.
+	// diffHidden is the Tab peek toggle: with a baseline set the tree still
+	// renders plain rows when true. inDiffMode() (a baseline exists) drives the
+	// header's two lines and the Esc ladder; renderingDelta() (a baseline exists
+	// AND not hidden) drives whether the Δ column is actually drawn.
 	diffHidden bool
 	// Compare view keeps its own (sortBy, order) so plain and compare each
 	// remember how they were last sorted — Tab flips between two renderings that

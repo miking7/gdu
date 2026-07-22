@@ -447,21 +447,26 @@ func (ui *UI) handleMainActions(key *tcell.EventKey) *tcell.EventKey {
 }
 
 // Teach-flash copy for the compare gestures when there is nothing to compare.
-// Transitional: it names today's key for choosing a baseline (S). Stage 4
-// rebinds the compare-previous/choose keys and rewrites this.
+// It names today's key for choosing a baseline (S); this is transitional copy,
+// expected to be rewritten when the baseline-stepping keys are added.
 const noBaselineNotice = "no baseline set — S to compare"
 
-// handleTabToggle flips the compare view's Δ rendering on and off (axis B), the
-// tree screen's counterpart pair. With no baseline set there is nothing to
-// compare, so it teaches the key that sets one. The filter-bar precedence (E11)
-// is handled upstream in handleFiltering, which runs before this.
+// handleTabToggle flips the compare view's Δ rendering on and off — the tree
+// screen's counterpart pair. With no baseline set there is nothing to compare,
+// so it teaches the key that sets one. The filter bar owns Tab while it is open;
+// that precedence is handled upstream in handleFiltering, which runs first.
 func (ui *UI) handleTabToggle() {
 	if !ui.inDiffMode() {
 		ui.headerNoticeNow(noBaselineNotice)
 		return
 	}
+	// The plain and compare renderings order rows differently (their own sort,
+	// and compare interleaves reference-less removed rows), so the index-keyed
+	// mark/ignore maps must reset across the flip — the same invariant every
+	// re-sort upholds. Otherwise a mark would silently move to another item.
 	sel := ui.selectedItemName()
 	ui.diffHidden = !ui.diffHidden
+	ui.resetRowSelection()
 	ui.updateHeader()
 	if ui.currentDir != nil {
 		ui.showDir()

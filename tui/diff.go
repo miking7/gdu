@@ -33,26 +33,30 @@ const (
 
 	minusSign = "−" // U+2212, the sign shown on negative (shrink/removed) deltas
 
-	// Column widths formatFileRow draws, mirrored here so a removed row (which
-	// has no live item to format) lines its Δ column up under the present rows'.
-	pctColWidth   = 7  // formatUsagePercentage: " %5.1f%%"
-	newBarWidth   = 12 // getUsageGraph
-	oldBarWidth   = 14 // " " + getUsageGraphOld + " "
-	countColWidth = 12 // "%11s "
-	mtimeColWidth = 20 // "2006-01-02 15:04:05" + " "
-	markColWidth  = 2  // "✓ " / "  "
-	// diffSizeColWidth is the visible width of formatFileRow's size column: its
-	// %15s field always embeds a 5-cell color tag ("[-::]"), so ten cells show.
-	diffSizeColWidth = 10
+	// Visible cell widths of the columns formatFileRow draws, mirrored here so a
+	// removed row (which has no live item to format) can pad its way to the same
+	// Δ-column offset. Two of these fields embed a color tag inside a wider format
+	// field, so the on-screen width is the format width minus the tag: the size
+	// column is %15s wrapping a size string that carries a 5-cell "[-::]" tag (10
+	// shown), and the count column is "%11s " wrapping formatCount output that
+	// carries the same tag (11 − 5 + 1 = 7 shown). An alignment test guards these.
+	pctColWidth      = 7  // formatUsagePercentage: " %5.1f%%"
+	newBarWidth      = 12 // getUsageGraph
+	oldBarWidth      = 14 // " " + getUsageGraphOld + " "
+	countColWidth    = 7  // "%11s " over a "[-::]"-tagged count
+	mtimeColWidth    = 20 // "2006-01-02 15:04:05" + " " (the trailing tag is zero-width)
+	markColWidth     = 2  // "✓ " / "  "
+	diffSizeColWidth = 10 // %15s over a "[-::]"-tagged size
 )
 
 // diffRow is one line in the compare view: either a present item (item != nil)
-// carrying its signed delta versus the baseline, or a baseline entry removed
-// since (removed != nil, item nil, delta = −then-size).
+// carrying its signed delta and category versus the baseline, or a baseline
+// entry removed since (removed != nil, item nil, delta = −then-size).
 type diffRow struct {
 	item    fs.Item
 	removed *analyze.RemovedEntry
 	delta   int64
+	cat     analyze.DiffCategory
 }
 
 // SetBaseline enters compare mode against b (the snapshot identified by info)
@@ -69,6 +73,7 @@ func (ui *UI) SetBaseline(b *analyze.Baseline, info *parquet.SnapshotInfo) {
 	ui.baselineTs = info.ScanTs
 	ui.baselineKey = info.Key()
 	ui.diffHidden = false
+	ui.resetRowSelection()
 	ui.updateHeader()
 	if ui.currentDir != nil {
 		ui.showDir()
@@ -80,15 +85,26 @@ func (ui *UI) clearBaseline() {
 	ui.baseline = nil
 	ui.baselineTs = time.Time{}
 	ui.baselineKey = parquet.SnapshotKey{}
+	ui.resetRowSelection()
 	ui.updateHeader()
 	if ui.currentDir != nil {
 		ui.showDir()
 	}
 }
 
-// inDiffMode reports whether a baseline is set (axis A). It drives the header's
-// two lines and the Esc ladder — everything that must state a comparison
-// exists — regardless of whether the Δ column is currently drawn.
+// resetRowSelection clears the mark and ignore maps, which are keyed by table
+// row index. Entering or leaving compare mode re-renders the tree in a different
+// order (compare has its own sort and interleaves reference-less removed rows),
+// so a stale index would move a mark onto another item — the same reason every
+// re-sort resets these maps.
+func (ui *UI) resetRowSelection() {
+	ui.markedRows = make(map[int]struct{})
+	ui.ignoredRows = make(map[int]struct{})
+}
+
+// inDiffMode reports whether a baseline is set. It drives the header's two lines
+// and the Esc ladder — everything that must state a comparison exists —
+// regardless of whether the Δ column is currently drawn (which is renderingDelta).
 func (ui *UI) inDiffMode() bool { return ui.baseline != nil }
 
 // renderingDelta reports whether the Δ column should actually be drawn: a
@@ -161,7 +177,11 @@ func (ui *UI) showDiffDir() {
 			cell = tview.NewTableCell(ui.formatRemovedRow(r.removed))
 		} else {
 			_, marked = ui.markedRows[idx]
-			cell = tview.NewTableCell(ui.formatFileRow(r.item, maxUsage, maxSize, marked, ignored))
+			// The delta and category were computed once in buildDiffRows; pass the
+			// rendered Δ field in rather than recomputing (and re-resolving the
+			// item's path) inside formatFileRow.
+			delta := " " + ui.deltaField(r.delta, r.cat) + " "
+			cell = tview.NewTableCell(ui.formatFileRow(r.item, maxUsage, maxSize, marked, ignored, delta))
 			cell.SetReference(r.item)
 		}
 		ui.applyRowStyle(cell, marked, ignored)
@@ -190,8 +210,8 @@ func (ui *UI) buildDiffRows() []diffRow {
 		if !ui.diffRowVisible(item.GetName(), item.IsDir()) {
 			continue
 		}
-		delta, _ := ui.baseline.Delta(item)
-		rows = append(rows, diffRow{item: item, delta: delta})
+		delta, cat := ui.baseline.Delta(item)
+		rows = append(rows, diffRow{item: item, delta: delta, cat: cat})
 	}
 
 	for _, e := range ui.baseline.RemovedUnder(ui.currentDirPath, present) {
@@ -222,19 +242,30 @@ func (ui *UI) sortDiffRows(rows []diffRow) {
 }
 
 // diffRowLess reports whether a sorts before b in ascending order for the key.
+// On an equal key it falls back to a natural name comparison, matching the
+// plain view's fs sorters (every fs.ByX.Less tie-breaks on the name) so the two
+// renderings agree on the order of equal-key rows across a Tab toggle.
 func (ui *UI) diffRowLess(a, b *diffRow, by string) bool {
 	switch by {
-	case nameSortKey:
-		return natural.Less(diffRowName(a), diffRowName(b))
 	case sizeSortKey:
-		return ui.diffRowSize(a) < ui.diffRowSize(b)
+		if sa, sb := ui.diffRowSize(a), ui.diffRowSize(b); sa != sb {
+			return sa < sb
+		}
 	case itemCountSortKey:
-		return diffRowCount(a) < diffRowCount(b)
+		if ca, cb := diffRowCount(a), diffRowCount(b); ca != cb {
+			return ca < cb
+		}
 	case mtimeSortKey:
-		return diffRowMtime(a).Before(diffRowMtime(b))
-	default: // deltaSortKey
-		return a.delta < b.delta
+		if ma, mb := diffRowMtime(a), diffRowMtime(b); !ma.Equal(mb) {
+			return ma.Before(mb)
+		}
+	case deltaSortKey:
+		if a.delta != b.delta {
+			return a.delta < b.delta
+		}
 	}
+	// nameSortKey lands here directly, and every other key falls through on a tie.
+	return natural.Less(diffRowName(a), diffRowName(b))
 }
 
 func diffRowName(r *diffRow) string {
@@ -278,32 +309,25 @@ func (ui *UI) diffRowVisible(name string, isDir bool) bool {
 	return ui.matchesTypeFilter(name, isDir)
 }
 
-// deltaColumn is the compare view's appended Δ field: the marker glyph and
-// signed growth of item versus the baseline, in a fixed-width cell so the names
-// still line up. It is empty in every non-compare rendering, so the plain table
-// (and a compare view with Δ toggled off) is byte-for-byte unchanged.
-func (ui *UI) deltaColumn(item fs.Item) string {
-	if !ui.renderingDelta() {
-		return ""
-	}
-	delta, cat := ui.baseline.Delta(item)
-	return " " + ui.deltaField(delta, cat) + " "
-}
-
 // formatRemovedRow renders a baseline item that no longer exists: its size shown
 // as a parenthesized "(then)" value, an em dash where the live bar would be, a
-// violet ✗ delta, and a struck-through name. It reproduces formatFileRow's
-// column widths so its Δ column lines up under the present rows'.
+// violet ✗ delta, and a struck-through name. The size-plus-middle region is
+// padded to the same visible width as a present row's, so its Δ column lines up
+// under the present rows' — even when the parentheses make the size string run
+// wider than a present row's bare size (the bar's width absorbs the overflow).
 func (ui *UI) formatRemovedRow(e *analyze.RemovedEntry) string {
 	then := "(" + ui.plainSize(e.Size) + ")"
+	// Right-align the size in its column (so units line up with the present rows
+	// when it fits), an em dash where the bar would be, then pad the whole region
+	// to sizeCol+middle. `then` carries no color tags, so its rune count is its
+	// cell count and %*s / padCells measure it correctly.
+	region := padCells(fmt.Sprintf("%*s", diffSizeColWidth, then)+"   —", diffSizeColWidth+ui.middleWidth())
 	row := " " // flag column: a removed item carries none
 	if ui.UseColors {
-		row += fmt.Sprintf("[%s::b]%*s", diffSizeMuteColor, diffSizeColWidth, then)
+		row += "[" + diffSizeMuteColor + "::b]" + region
 	} else {
-		row += fmt.Sprintf("%s%*s", defaultColorBold, diffSizeColWidth, then)
+		row += defaultColorBold + region
 	}
-
-	row += ui.diffMiddleBlank()
 
 	body := padCells(fmt.Sprintf("✗ −%s", ui.plainSize(e.Size)), diffDeltaWidth)
 	if ui.UseColors {
@@ -325,30 +349,29 @@ func (ui *UI) formatRemovedRow(e *analyze.RemovedEntry) string {
 	return row
 }
 
-// diffMiddleBlank reproduces the width of the percentage + bar (+ optional
-// count/mtime/mark) columns that formatFileRow draws, filled with blanks and a
-// single em dash where the bar would be — a removed item has no live size to
-// scale a bar from. It inherits the muted color of the size column before it.
-func (ui *UI) diffMiddleBlank() string {
-	var b strings.Builder
-	if ui.showBarPercentage {
-		b.WriteString(strings.Repeat(" ", pctColWidth))
-	}
-	barWidth := newBarWidth
+// middleWidth is the total visible width of the columns formatFileRow draws
+// between the size column and the appended Δ field — percentage, bar, and the
+// optional count/mtime/mark columns — under the current display toggles. A
+// removed row pads to sizeCol+middleWidth so its Δ column aligns with the
+// present rows'.
+func (ui *UI) middleWidth() int {
+	w := newBarWidth
 	if ui.useOldSizeBar {
-		barWidth = oldBarWidth
+		w = oldBarWidth
 	}
-	b.WriteString(padCells("  —", barWidth))
+	if ui.showBarPercentage {
+		w += pctColWidth
+	}
 	if ui.showItemCount {
-		b.WriteString(strings.Repeat(" ", countColWidth))
+		w += countColWidth
 	}
 	if ui.showMtime {
-		b.WriteString(strings.Repeat(" ", mtimeColWidth))
+		w += mtimeColWidth
 	}
 	if len(ui.markedRows) > 0 {
-		b.WriteString(strings.Repeat(" ", markColWidth))
+		w += markColWidth
 	}
-	return b.String()
+	return w
 }
 
 // deltaField renders the marker glyph and signed magnitude for one category,

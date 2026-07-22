@@ -296,7 +296,7 @@ func TestTabAndDTeachFlashWithoutCompare(t *testing.T) {
 }
 
 // TestPerModeSortMemory confirms the plain and compare views keep independent
-// (sortBy, order): sorting in one never disturbs the other (E16).
+// (sortBy, order): sorting in one never disturbs the other, session-scoped.
 func TestPerModeSortMemory(t *testing.T) {
 	ui := newDiffUI(t)
 
@@ -325,7 +325,7 @@ func TestPerModeSortMemory(t *testing.T) {
 }
 
 // TestMarksRenderInCompareView confirms marking works and is visible in the
-// compare view — the natural "sort by growth → mark → delete" workflow (J4).
+// compare view — the natural "sort by growth → mark → delete" workflow.
 func TestMarksRenderInCompareView(t *testing.T) {
 	ui := newDiffUI(t)
 	ui.SetBaseline(analyze.BuildBaseline(diffBaselineTop(), "top", 0), snapAt(diffBaselineTime()))
@@ -348,7 +348,7 @@ func TestMarksRenderInCompareView(t *testing.T) {
 
 // TestDeleteReRendersCompareView confirms a deletion (here simulated by removing
 // the item from the live tree) re-renders the compare view with updated deltas:
-// the removed item flips to an inline removed row (E14).
+// the removed item flips to an inline removed row.
 func TestDeleteReRendersCompareView(t *testing.T) {
 	ui := newDiffUI(t)
 	ui.SetBaseline(analyze.BuildBaseline(diffBaselineTop(), "top", 0), snapAt(diffBaselineTime()))
@@ -360,4 +360,127 @@ func TestDeleteReRendersCompareView(t *testing.T) {
 	row := diffRowContaining(ui, "big")
 	assert.Contains(t, row, "✗", "the deleted item now shows as removed")
 	assert.Contains(t, row, "removed")
+}
+
+// markFirstPresentRow selects and marks the first row carrying a real item.
+func markFirstPresentRow(ui *UI) {
+	for r := 0; r < ui.table.GetRowCount(); r++ {
+		c := ui.table.GetCell(r, 0)
+		if c != nil && c.GetReference() != nil {
+			ui.table.Select(r, 0)
+			ui.handleMark()
+			return
+		}
+	}
+}
+
+// TestCompareTransitionsResetSelection guards the index-keyed mark/ignore maps:
+// the plain and compare renderings order rows differently (own sort, plus
+// compare's inline removed rows), so a mark left over from one rendering would
+// silently attach to a different item — and deleteMarked would delete the wrong
+// one, or panic on a reference-less removed row. Every mode transition must
+// reset the maps, exactly as a normal re-sort does.
+func TestCompareTransitionsResetSelection(t *testing.T) {
+	setBaseline := func(ui *UI) {
+		ui.SetBaseline(analyze.BuildBaseline(diffBaselineTop(), "top", 0), snapAt(diffBaselineTime()))
+	}
+
+	// Tab (compare → plain) resets marks and ignores.
+	ui := newDiffUI(t)
+	setBaseline(ui)
+	markFirstPresentRow(ui)
+	ui.ignoredRows[0] = struct{}{}
+	require.NotEmpty(t, ui.markedRows)
+	ui.keyPressed(tcell.NewEventKey(tcell.KeyTab, 0, 0))
+	assert.Empty(t, ui.markedRows, "Tab must reset the index-keyed marks")
+	assert.Empty(t, ui.ignoredRows, "Tab must reset the index-keyed ignores")
+
+	// clearBaseline (compare → plain) resets marks.
+	ui = newDiffUI(t)
+	setBaseline(ui)
+	markFirstPresentRow(ui)
+	require.NotEmpty(t, ui.markedRows)
+	ui.clearBaseline()
+	assert.Empty(t, ui.markedRows, "clearBaseline must reset the marks")
+
+	// SetBaseline (plain → compare) resets a mark made in the plain view.
+	ui = newDiffUI(t)
+	ui.showDir() // render the plain table so there is a row to mark
+	markFirstPresentRow(ui)
+	require.NotEmpty(t, ui.markedRows)
+	setBaseline(ui)
+	assert.Empty(t, ui.markedRows, "SetBaseline must reset the marks")
+}
+
+// alignBig/alignBaseline build a tree whose sizes are large enough to stress the
+// removed-row column mirroring: a present grown file, and a removed file whose
+// parenthesized "(then)" size is wider than a bare present size.
+func alignCurrent() *analyze.Dir {
+	const mi = 1 << 20
+	top := &analyze.Dir{File: &analyze.File{Name: "top"}, ItemCount: 1}
+	// Flag ' ' matches what a real scan sets (getFlag); a normal file is never
+	// the zero rune, which would render zero-width and skew the alignment check.
+	top.AddFile(&analyze.File{Name: "big", Size: 300 * mi, Usage: 300 * mi, Flag: ' ', Parent: top})
+	top.UpdateStats(make(fs.HardLinkedItems))
+	return top
+}
+
+func alignBaseline() *analyze.Dir {
+	const mi = 1 << 20
+	top := &analyze.Dir{File: &analyze.File{Name: "top"}, ItemCount: 1}
+	top.AddFile(&analyze.File{Name: "big", Size: 200 * mi, Usage: 200 * mi, Flag: ' ', Parent: top})
+	top.AddFile(&analyze.File{Name: "hugegone", Size: 250 * mi, Usage: 250 * mi, Flag: ' ', Parent: top})
+	top.UpdateStats(make(fs.HardLinkedItems))
+	return top
+}
+
+// markerVisibleOffset returns the on-screen column where marker first appears in
+// the row containing name, tag-stripped (tview.TaggedStringWidth of the prefix).
+func markerVisibleOffset(t *testing.T, ui *UI, name, marker string) int {
+	t.Helper()
+	for r := 0; r < ui.table.GetRowCount(); r++ {
+		c := ui.table.GetCell(r, 0)
+		if c == nil || !strings.Contains(c.Text, name) {
+			continue
+		}
+		i := strings.Index(c.Text, marker)
+		require.GreaterOrEqual(t, i, 0, "marker %q not found in row %q", marker, c.Text)
+		return tview.TaggedStringWidth(c.Text[:i])
+	}
+	t.Fatalf("row %q not found", name)
+	return -1
+}
+
+// TestCompareRemovedRowColumnAlignment asserts a removed row's Δ column lines up
+// under the present rows' across every combination of the optional columns —
+// the invariant formatRemovedRow's width mirroring exists to hold. It stresses
+// the count column (whose width hides an embedded color tag) and a removed size
+// wide enough that its parentheses overflow a bare present size.
+func TestCompareRemovedRowColumnAlignment(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		count, mtime, pct bool
+	}{
+		{"bars-only", false, false, false},
+		{"with-count", true, false, false},
+		{"with-mtime", false, true, false},
+		{"with-percentage", false, false, true},
+		{"all-columns", true, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ui := newDiffUI(t)
+			ui.currentDir = alignCurrent()
+			ui.topDir = ui.currentDir
+			ui.topDirPath = "top"
+			ui.showItemCount = tc.count
+			ui.showMtime = tc.mtime
+			ui.showBarPercentage = tc.pct
+			ui.SetBaseline(analyze.BuildBaseline(alignBaseline(), "top", 0), snapAt(diffBaselineTime()))
+
+			grew := markerVisibleOffset(t, ui, "big", "▲")
+			removed := markerVisibleOffset(t, ui, "hugegone", "✗")
+			assert.Equal(t, grew, removed,
+				"removed row's Δ marker must align with the present rows' (columns: %+v)", tc)
+		})
+	}
 }
