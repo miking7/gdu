@@ -369,7 +369,7 @@ func (ui *UI) handleMainActions(key *tcell.EventKey) *tcell.EventKey {
 		return key
 	}
 	// Tab is the tree screen's counterpart toggle: plain ↔ Δ. The filter bar
-	// owns Tab when open (E11) — handleFiltering runs earlier and consumes it —
+	// owns Tab when open — handleFiltering runs earlier and consumes it —
 	// so reaching here means no filter bar, and Tab flips the compare rendering.
 	if key.Key() == tcell.KeyTab {
 		ui.handleTabToggle()

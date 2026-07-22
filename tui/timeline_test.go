@@ -507,8 +507,8 @@ func TestStepToLiveEndDuringScanShowsProgress(t *testing.T) {
 }
 
 // TestStepNewerFromOffTimelineSnapshot: ] from a snapshot View that is not a
-// timeline member (a -f import, or a foreign identity) must reach the D2
-// switch-or-offer, not silently no-op (review finding).
+// timeline member (a -f import, or a foreign identity) must reach the
+// switch-to-covering-timeline-or-offer-rescan flow, not silently no-op.
 func TestStepNewerFromOffTimelineSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	writeArchiveSnapshot(t, dir, "s2.parquet", "/root", 20, 40, ts2)

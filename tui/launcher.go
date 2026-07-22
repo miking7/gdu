@@ -102,9 +102,9 @@ type launcherState struct {
 }
 
 // OpenLauncher shows the launcher for defaultPath (the cwd or the CLI path).
-// pathFromArg is true when a path was named on the command line — the D12
-// discriminator: an explicit path pre-selects the folder row, a bare launch the
-// cwd's disk row. Device discovery failure is not fatal: the launcher still
+// pathFromArg is true when a path was named on the command line, and decides the
+// initial selection: an explicit path pre-selects the folder row, a bare launch
+// the cwd's disk row. Device discovery failure is not fatal: the launcher still
 // offers the folder and Other-folder rows, so plain `gdu` keeps working where
 // mount enumeration is flaky.
 func (ui *UI) OpenLauncher(getter device.DevicesInfoGetter, defaultPath string, pathFromArg bool) error {

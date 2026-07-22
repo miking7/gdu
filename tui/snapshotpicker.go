@@ -100,8 +100,9 @@ func (ui *UI) coveringForTarget(
 	return ui.coveringListings(target, mountForTarget(devices, getter, target))
 }
 
-// mountForTarget resolves target's most-specific mount point for the D17
-// covering clamp. It prefers the device list captured when the launcher ran
+// mountForTarget resolves target's most-specific mount point for the covering
+// clamp (a snapshot covers a folder only when its root is at or above the
+// folder's own mount). It prefers the device list captured when the launcher ran
 // (devices); when the launcher was skipped (-f, --read-from-storage,
 // launcher:false) that list is empty, so it falls back to a fresh getter query.
 // Either failure leaves mount "" and covering degrades to path-covering. It may
