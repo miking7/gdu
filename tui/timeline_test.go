@@ -399,17 +399,23 @@ func TestStepDuringScanKeepsProgressHidden(t *testing.T) {
 
 // blockingAnalyzer is a MockedAnalyzer whose AnalyzeDir blocks until released,
 // so tests can hold a scan "running". tree, when set, is returned by
-// GetCurrentDir so a mid-scan preview has a partial tree to show.
+// GetCurrentDir so a mid-scan preview has a partial tree to show; final, when
+// set, is the completed-scan tree AnalyzeDir returns on release (nil falls back
+// to the mock tree), so a test can control both the partial and the finished tree.
 type blockingAnalyzer struct {
 	testanalyze.MockedAnalyzer
 	release chan struct{}
 	tree    fs.Item
+	final   fs.Item
 }
 
 func (a *blockingAnalyzer) AnalyzeDir(
 	path string, ignore common.ShouldDirBeIgnored, filter common.ShouldFileBeIgnored,
 ) fs.Item {
 	<-a.release
+	if a.final != nil {
+		return a.final
+	}
 	return a.MockedAnalyzer.AnalyzeDir(path, ignore, filter)
 }
 
