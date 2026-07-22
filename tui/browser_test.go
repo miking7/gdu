@@ -346,6 +346,87 @@ func TestBrowserPreSelectsActiveBaseline(t *testing.T) {
 	assert.Equal(t, st.baseCur, st.initBaseCur, "the applied baseline is not a pending change")
 }
 
+// browserTestUIColors builds a bare colors-on UI so the red unreadable marker is
+// exercised (browserTestUI runs with colors off).
+func browserTestUIColors(t *testing.T) *UI {
+	t.Helper()
+	app := testapp.CreateMockedApp(true)
+	sim := testapp.CreateSimScreen()
+	t.Cleanup(func() { sim.Fini() })
+	return CreateUI(app, sim, &bytes.Buffer{}, true, false, false, false)
+}
+
+// TestBrowserAbsentAndErrorCells: a covering snapshot missing the folder renders
+// the absent "—" in both the size and Δ cells; one whose file is unreadable
+// renders the red "?" in both — a read error is never mistaken for absence.
+func TestBrowserAbsentAndErrorCells(t *testing.T) {
+	ui := browserTestUIColors(t)
+	cov := coveringListingsForTest(2)
+	cfg := treeBrowserCfg(focusViewing, cov)
+	cfg.fillTarget = "/root" // the rich When/Size/Δ/Root layout (the tree browser always fills)
+	st := ui.newBrowserStateForTest(cfg)
+	require.Equal(t, browserLiveRow, st.rows[st.viewCur].kind, "● is on the live row, so the snapshots carry a Δ")
+
+	st.sizes[cov[0].Key()] = browserSize{state: sizeAbsent} // folder absent in this snapshot
+	st.sizes[cov[1].Key()] = browserSize{state: sizeError}  // snapshot file unreadable
+	ui.renderBrowserBody(st)
+
+	// cov[0] is table row 2 (rows index 1); cov[1] is table row 3.
+	assert.Contains(t, st.table.GetCell(2, st.sizeCol).Text, snapshotAbsentMarker, "absent size renders —")
+	assert.Contains(t, st.table.GetCell(2, st.deltaCol).Text, snapshotAbsentMarker, "absent Δ renders —")
+	errCell := st.table.GetCell(3, st.sizeCol).Text
+	assert.Contains(t, errCell, snapshotErrorMarker, "unreadable size renders ?")
+	assert.Contains(t, errCell, "red", "the unreadable marker is red")
+	assert.Contains(t, st.table.GetCell(3, st.deltaCol).Text, snapshotErrorMarker, "unreadable Δ renders ?")
+}
+
+// TestBrowserDeltaUndefinedWhenViewHasNoSize: when ● sits where it has no folder
+// size — an other-roots row, or a snapshot whose folder is absent/unreadable —
+// the other rows' Δ renders the undefined "—", never a "…" implying a fill that
+// will never complete.
+func TestBrowserDeltaUndefinedWhenViewHasNoSize(t *testing.T) {
+	ui := browserTestUI(t)
+	cov := coveringListingsForTest(2)
+	cfg := treeBrowserCfg(focusViewing, cov)
+	cfg.fillTarget = "/root" // the rich layout with a Δ column
+	cfg.otherRoots = []report.SnapshotListing{{
+		SnapshotInfo: parquet.SnapshotInfo{ScanRoot: "/other", ScanTs: time.Now(), Host: "h"},
+	}}
+	st := ui.newBrowserStateForTest(cfg)
+	st.sizes[cov[0].Key()] = browserSize{state: sizeResolved, bytes: 100}
+	st.sizes[cov[1].Key()] = browserSize{state: sizeResolved, bytes: 90}
+
+	// Park ● on the other-roots row (rows: live0, snap1, snap2, section3, other4).
+	st.viewCur = 4
+	require.Equal(t, browserOtherRow, st.rows[st.viewCur].kind)
+	ui.renderBrowserBody(st)
+	deltaCell := st.table.GetCell(2, st.deltaCol).Text // cov[0]
+	assert.Contains(t, deltaCell, snapshotAbsentMarker, "Δ is undefined when ● has no folder size")
+	assert.NotContains(t, deltaCell, snapshotSizePlaceholder, "and never the loading placeholder")
+
+	// Park ● on a covering snapshot whose own size is unreadable.
+	st.viewCur = 1
+	st.sizes[cov[0].Key()] = browserSize{state: sizeError}
+	ui.renderBrowserBody(st)
+	deltaCell = st.table.GetCell(3, st.deltaCol).Text // cov[1], vs ● (cov[0], unreadable)
+	assert.Contains(t, deltaCell, snapshotAbsentMarker, "Δ is undefined when ●'s own size is unreadable")
+	assert.NotContains(t, deltaCell, snapshotSizePlaceholder, "and never the loading placeholder")
+}
+
+// TestBrowserCloseBumpsFillGeneration: closing the browser bumps the fill
+// generation (so any queued async size update is dropped) and clears the browser
+// pointer.
+func TestBrowserCloseBumpsFillGeneration(t *testing.T) {
+	ui := browserTestUI(t)
+	st := ui.newBrowserStateForTest(treeBrowserCfg(focusViewing, coveringListingsForTest(1)))
+	require.Same(t, st, ui.browser)
+
+	gen := ui.snapshotPickerGen
+	ui.closeSnapshotPicker()
+	assert.NotEqual(t, gen, ui.snapshotPickerGen, "closing invalidates the fill generation")
+	assert.Nil(t, ui.browser, "closing clears the browser pointer")
+}
+
 // TestBrowserFillResolvesFolderSizes drives the O door end-to-end through the
 // event loop: the covering snapshot's folder size fills in and its Δ vs the
 // live ● is computed.

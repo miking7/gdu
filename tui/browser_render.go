@@ -156,64 +156,82 @@ func (ui *UI) browserSizeCell(st *browserState, i int) string {
 		return ui.dim(snapshotAbsentMarker) // a different root does not cover this folder
 	}
 	sz := st.sizes[r.listing.Key()]
-	//nolint:exhaustive // Why: default renders the sizeFilling placeholder
-	switch sz.state {
-	case sizeResolved:
+	if sz.state == sizeResolved {
 		return ui.pickerSizeCell(sz.bytes)
-	case sizeAbsent:
-		return ui.dim(snapshotAbsentMarker)
-	case sizeError:
-		return ui.browserErrorMarker()
-	default:
-		return ui.dim(snapshotSizePlaceholder)
 	}
+	return ui.browserPendingMarker(sz.state)
 }
 
 // browserDeltaCell renders a row's Δ-versus-● cell: how much bigger the ● view
-// is than this row's folder. The cursor's own row and the live/other rows carry
-// no Δ; a Δ waits on both ●'s size and the row's size resolving.
+// is than this row's folder. Rows with no Δ of their own — the ● cursor's own
+// row, the live row, and other-roots rows — show the undefined "—". Otherwise the
+// row's own size resolves first (its absent/unreadable/filling marker shows
+// through until then); once it has, the Δ still needs ●'s folder size, which may
+// be a number (render the Δ), still filling ("…"), or undefined ("—", because ●
+// sits where it has no folder size, so no Δ will ever exist).
 func (ui *UI) browserDeltaCell(st *browserState, i int) string {
 	r := &st.rows[i]
-	if i == st.viewCur || r.kind == browserLiveRow {
-		return ui.dim(snapshotAbsentMarker)
-	}
-	if r.kind == browserOtherRow {
+	if i == st.viewCur || r.kind == browserLiveRow || r.kind == browserOtherRow {
 		return ui.dim(snapshotAbsentMarker)
 	}
 	sz := st.sizes[r.listing.Key()]
-	//nolint:exhaustive // Why: default renders the sizeFilling placeholder
-	switch sz.state {
-	case sizeAbsent:
-		return ui.dim(snapshotAbsentMarker)
-	case sizeError:
-		return ui.browserErrorMarker()
-	case sizeResolved:
-		viewSize, ok := ui.browserViewSize(st)
-		if !ok {
-			return ui.dim(snapshotSizePlaceholder) // ●'s own size is still resolving
-		}
+	if sz.state != sizeResolved {
+		return ui.browserPendingMarker(sz.state)
+	}
+	viewSize, vstate := ui.browserViewSize(st)
+	//nolint:exhaustive // Why: viewSizeUndefined falls to the default undefined marker
+	switch vstate {
+	case viewSizeKnown:
 		return ui.pickerDelta(viewSize - sz.bytes)
+	case viewSizeFilling:
+		return ui.dim(snapshotSizePlaceholder) // ●'s own size is still resolving
 	default:
-		return ui.dim(snapshotSizePlaceholder)
+		return ui.dim(snapshotAbsentMarker) // ● has no folder size to diff against
 	}
 }
 
-// browserViewSize returns the folder size at wherever ● currently sits, and
-// whether it is known yet. The live row's size is always known; a snapshot's is
-// known once the fill resolves it; an other-root row has no folder size.
-func (ui *UI) browserViewSize(st *browserState) (int64, bool) {
+// browserViewSizeState classifies ●'s folder size — the left operand of every Δ:
+// a known number, still resolving, or undefined (● on a row that has no folder
+// size). It decides whether the other rows' Δ shows a value, the "…" loading
+// marker, or the "—" undefined marker — so a size that will never resolve is not
+// mistaken for one still on its way.
+type browserViewSizeState int
+
+const (
+	viewSizeKnown browserViewSizeState = iota
+	viewSizeFilling
+	viewSizeUndefined
+)
+
+// browserViewSize returns the folder size at wherever ● currently sits and
+// whether that size is known, still resolving, or undefined. The live row's size
+// is always known; a covering snapshot's is known once its fill resolves,
+// filling until then, and undefined when the folder was absent or the file
+// unreadable; a section/other-roots row has no folder size at all.
+func (ui *UI) browserViewSize(st *browserState) (int64, browserViewSizeState) {
 	r := &st.rows[st.viewCur]
 	//nolint:exhaustive // Why: default covers the section/other rows (no folder size)
 	switch r.kind {
 	case browserLiveRow:
-		return st.cfg.live.size, true
+		return st.cfg.live.size, viewSizeKnown
 	case browserSnapRow:
-		if sz := st.sizes[r.listing.Key()]; sz.state == sizeResolved {
-			return sz.bytes, true
-		}
-		return 0, false
+		return browserSnapViewSize(st.sizes[r.listing.Key()])
 	default:
-		return 0, false
+		return 0, viewSizeUndefined
+	}
+}
+
+// browserSnapViewSize maps a covering snapshot's fill state to ●'s folder-size
+// state when ● rests on that snapshot.
+func browserSnapViewSize(sz browserSize) (int64, browserViewSizeState) {
+	//nolint:exhaustive // Why: default is the still-filling case
+	switch sz.state {
+	case sizeResolved:
+		return sz.bytes, viewSizeKnown
+	case sizeAbsent, sizeError:
+		return 0, viewSizeUndefined
+	default:
+		return 0, viewSizeFilling
 	}
 }
 
@@ -232,6 +250,21 @@ func (ui *UI) browserErrorMarker() string {
 		return "[red::b]" + snapshotErrorMarker
 	}
 	return snapshotErrorMarker
+}
+
+// browserPendingMarker renders a snapshot cell whose folder size is not a
+// resolved number: the absent "—", the unreadable "?", or the still-filling "…".
+// The size and Δ columns share it, so their non-resolved states never drift.
+func (ui *UI) browserPendingMarker(state browserSizeState) string {
+	//nolint:exhaustive // Why: sizeResolved is the caller's own arm; default is filling
+	switch state {
+	case sizeAbsent:
+		return ui.dim(snapshotAbsentMarker)
+	case sizeError:
+		return ui.browserErrorMarker()
+	default:
+		return ui.dim(snapshotSizePlaceholder)
+	}
 }
 
 // updateBrowserChrome refreshes the header lines and the dynamic scriptable
