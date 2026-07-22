@@ -463,6 +463,55 @@ func TestBrowserCloseBumpsFillGeneration(t *testing.T) {
 	assert.Nil(t, ui.browser, "closing clears the browser pointer")
 }
 
+// TestBrowserFilledRowRepaintsOnlyThatRow: resolving a non-● snapshot repaints
+// just its own cells; a second snapshot whose size also changed but was not the
+// subject of the call keeps its prior cell — the fill is O(N), not a full-table
+// rebuild per emit.
+func TestBrowserFilledRowRepaintsOnlyThatRow(t *testing.T) {
+	ui := browserTestUI(t)
+	cov := coveringListingsForTest(2)
+	cfg := treeBrowserCfg(focusViewing, cov)
+	cfg.fillTarget = "/root"
+	st := ui.newBrowserStateForTest(cfg) // ● on live; both snapshots start as "…"
+	require.Equal(t, browserLiveRow, st.rows[st.viewCur].kind)
+	require.Contains(t, st.table.GetCell(2, st.sizeCol).Text, snapshotSizePlaceholder)
+	require.Contains(t, st.table.GetCell(3, st.sizeCol).Text, snapshotSizePlaceholder)
+
+	// Resolve both sizes in state, but only tell the renderer about cov[0].
+	st.sizes[cov[0].Key()] = browserSize{state: sizeResolved, bytes: 100}
+	st.sizes[cov[1].Key()] = browserSize{state: sizeResolved, bytes: 90}
+	ui.renderBrowserFilledRow(st, cov[0].Key())
+
+	assert.Contains(t, st.table.GetCell(2, st.sizeCol).Text, "100", "cov[0]'s row was repainted")
+	assert.Contains(t, st.table.GetCell(3, st.sizeCol).Text, snapshotSizePlaceholder,
+		"cov[1]'s row was left as-is (not a full-table rebuild)")
+}
+
+// TestBrowserFilledRowRepaintsAllWhenViewRowResolves: when ● sits on a snapshot
+// and that snapshot's size resolves, every row's Δ reads against it, so the whole
+// body repaints and the other rows' Δ cells update too.
+func TestBrowserFilledRowRepaintsAllWhenViewRowResolves(t *testing.T) {
+	ui := browserTestUI(t)
+	cov := coveringListingsForTest(2)
+	cfg := treeBrowserCfg(focusViewing, cov)
+	cfg.fillTarget = "/root"
+	cfg.curViewLive = false
+	cfg.curViewKey = cov[0].Key() // ● on the newest snapshot
+	st := ui.newBrowserStateForTest(cfg)
+	require.Equal(t, cov[0].Key(), st.rows[st.viewCur].listing.Key())
+
+	// The other snapshot's size is known; ●'s is not yet, so its Δ waits.
+	st.sizes[cov[1].Key()] = browserSize{state: sizeResolved, bytes: 90}
+	ui.renderBrowserFilledRow(st, cov[1].Key()) // non-● resolve: single row
+	assert.Contains(t, st.table.GetCell(3, st.deltaCol).Text, snapshotSizePlaceholder,
+		"cov[1]'s Δ waits on ●'s own size")
+
+	// Now ●'s own size resolves: the whole body repaints and cov[1]'s Δ appears.
+	st.sizes[cov[0].Key()] = browserSize{state: sizeResolved, bytes: 100}
+	ui.renderBrowserFilledRow(st, cov[0].Key())
+	assert.Contains(t, st.table.GetCell(3, st.deltaCol).Text, "10", "Δ = ●(100) − cov[1](90) now renders")
+}
+
 // TestBrowserFillResolvesFolderSizes drives the O door end-to-end through the
 // event loop: the covering snapshot's folder size fills in and its Δ vs the
 // live ● is computed.

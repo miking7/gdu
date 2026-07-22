@@ -22,6 +22,7 @@ func (cfg *browserConfig) rich() bool { return cfg.fillTarget != "" }
 // setBrowserHeaderCells writes the column headers into table row 0 and records
 // the column indices. Row 0 is non-selectable so the cursor skips it.
 func (ui *UI) setBrowserHeaderCells(st *browserState) {
+	st.localHost = common.HostnameBestEffort() // resolved once; the row renderer and fill reuse it
 	cfg := st.cfg
 	var headers []string
 	if cfg.rich() {
@@ -47,10 +48,9 @@ func (ui *UI) setBrowserHeaderCells(st *browserState) {
 // browserHasForeignHost reports whether any listed snapshot was taken on another
 // machine, so the Host column earns its place.
 func (ui *UI) browserHasForeignHost(st *browserState) bool {
-	localHost := common.HostnameBestEffort()
 	for i := range st.rows {
 		if st.rows[i].kind == browserSnapRow || st.rows[i].kind == browserOtherRow {
-			if common.HostIsForeign(st.rows[i].listing.Host, localHost) {
+			if common.HostIsForeign(st.rows[i].listing.Host, st.localHost) {
 				return true
 			}
 		}
@@ -63,27 +63,33 @@ func (ui *UI) browserHasForeignHost(st *browserState) bool {
 // clearing the table, so the tview selection highlight is preserved. Cheap for
 // the small lists a browser shows.
 func (ui *UI) renderBrowserBody(st *browserState) {
-	localHost := common.HostnameBestEffort()
 	for i := range st.rows {
-		row := i + 1
-		r := &st.rows[i]
-		if r.kind == browserSectionRow {
-			ui.renderBrowserSectionRow(st, row)
+		if st.rows[i].kind == browserSectionRow {
+			ui.renderBrowserSectionRow(st, i+1)
 			continue
 		}
-		st.table.SetCell(row, st.whenCol, tview.NewTableCell(ui.browserWhenCell(st, i)))
-		st.table.SetCell(row, st.sizeCol, tview.NewTableCell(ui.browserSizeCell(st, i)))
-		if st.deltaCol >= 0 {
-			st.table.SetCell(row, st.deltaCol, tview.NewTableCell(ui.browserDeltaCell(st, i)))
+		ui.renderBrowserDataRow(st, i)
+	}
+}
+
+// renderBrowserDataRow writes one non-section row's cells (table row = rows index
+// + 1) from the current cursor positions and resolved sizes. The async fill calls
+// it to refresh just the row whose size landed, instead of rebuilding the table.
+func (ui *UI) renderBrowserDataRow(st *browserState, i int) {
+	row := i + 1
+	r := &st.rows[i]
+	st.table.SetCell(row, st.whenCol, tview.NewTableCell(ui.browserWhenCell(st, i)))
+	st.table.SetCell(row, st.sizeCol, tview.NewTableCell(ui.browserSizeCell(st, i)))
+	if st.deltaCol >= 0 {
+		st.table.SetCell(row, st.deltaCol, tview.NewTableCell(ui.browserDeltaCell(st, i)))
+	}
+	st.table.SetCell(row, st.rootCol, tview.NewTableCell(ui.browserRootCell(st, i)))
+	if st.hostCol >= 0 {
+		host := ""
+		if r.kind != browserLiveRow && common.HostIsForeign(r.listing.Host, st.localHost) {
+			host = ui.pickerHostCell(r.listing.Host)
 		}
-		st.table.SetCell(row, st.rootCol, tview.NewTableCell(ui.browserRootCell(st, i)))
-		if st.hostCol >= 0 {
-			host := ""
-			if r.kind != browserLiveRow && common.HostIsForeign(r.listing.Host, localHost) {
-				host = ui.pickerHostCell(r.listing.Host)
-			}
-			st.table.SetCell(row, st.hostCol, tview.NewTableCell(host))
-		}
+		st.table.SetCell(row, st.hostCol, tview.NewTableCell(host))
 	}
 }
 
@@ -91,7 +97,7 @@ func (ui *UI) renderBrowserBody(st *browserState) {
 // non-selectable so the cursor skips it, and clears the remaining columns.
 func (ui *UI) renderBrowserSectionRow(st *browserState, row int) {
 	st.table.SetCell(row, 0, tview.NewTableCell(ui.dim(browserOtherSection)).SetSelectable(false))
-	for col := 1; col <= maxInt(st.rootCol, st.hostCol); col++ {
+	for col := 1; col <= max(st.rootCol, st.hostCol); col++ {
 		st.table.SetCell(row, col, tview.NewTableCell("").SetSelectable(false))
 	}
 }
@@ -337,51 +343,70 @@ func (ui *UI) browserHintText(st *browserState) string {
 
 // startBrowserFill reads each covering snapshot's folder size in the background
 // and re-renders as sizes resolve, dropping stale updates by the generation
-// guard. It mirrors the picker's fill but feeds the two-cursor Δ column, which
-// reads against wherever ● sits, so a resolved size can change many rows' Δ.
+// guard. It feeds the two-cursor Δ column, which reads against wherever ● sits.
 func (ui *UI) startBrowserFill(st *browserState) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ui.snapshotSizeCancel = cancel
 	gen := ui.snapshotPickerGen
 	resolved := make(map[parquet.SnapshotKey]bool, len(st.cfg.covering))
 
-	apply := func(update func()) {
+	// applyRow commits one snapshot's resolved size and repaints just its cells —
+	// or the whole body when it is ●'s own row, since then every Δ shifts.
+	// Repainting the full body per emit was O(N²): exact-root snapshots all
+	// resolve in one synchronous burst, so N emits meant N full table rebuilds.
+	applyRow := func(key parquet.SnapshotKey, update func()) {
 		ui.app.QueueUpdateDraw(func() {
-			if ui.snapshotPickerGen == gen && ui.browser == st {
-				update()
-				ui.renderBrowserBody(st)
+			if ui.snapshotPickerGen != gen || ui.browser != st {
+				return
 			}
+			update()
+			ui.renderBrowserFilledRow(st, key)
 		})
 	}
 
 	ui.goPickerWork(func() {
 		report.FolderSizesEach(ctx, ui.snapshotsDir, st.cfg.covering, st.cfg.fillTarget,
 			func(key parquet.SnapshotKey, size int64) {
-				apply(func() {
+				applyRow(key, func() {
 					resolved[key] = true
 					st.sizes[key] = browserSize{state: sizeResolved, bytes: size}
 				})
 			},
 			func(key parquet.SnapshotKey) {
-				apply(func() {
+				applyRow(key, func() {
 					resolved[key] = true
 					st.sizes[key] = browserSize{state: sizeError}
 				})
 			})
-		apply(func() {
+		// Any snapshot left unresolved had no row for the folder — mark those
+		// absent in one final full pass (several rows may change at once, and ●'s
+		// own may be among them).
+		ui.app.QueueUpdateDraw(func() {
+			if ui.snapshotPickerGen != gen || ui.browser != st {
+				return
+			}
 			for i := range st.cfg.covering {
 				key := st.cfg.covering[i].Key()
 				if !resolved[key] {
 					st.sizes[key] = browserSize{state: sizeAbsent}
 				}
 			}
+			ui.renderBrowserBody(st)
 		})
 	})
 }
 
-func maxInt(a, b int) int {
-	if a > b {
-		return a
+// renderBrowserFilledRow repaints the row whose snapshot size just resolved. When
+// that row is ●'s own, every other row's Δ now reads against a new value, so the
+// whole body is repainted; otherwise only this row's size and Δ changed.
+func (ui *UI) renderBrowserFilledRow(st *browserState, key parquet.SnapshotKey) {
+	i := st.rowForKey(key)
+	switch {
+	case i < 0:
+		return
+	case i == st.viewCur:
+		ui.renderBrowserBody(st)
+	default:
+		ui.renderBrowserDataRow(st, i)
 	}
-	return b
 }

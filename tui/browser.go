@@ -116,6 +116,10 @@ type browserState struct {
 
 	sizes map[parquet.SnapshotKey]browserSize
 
+	// localHost is the machine name, resolved once at open (a syscall). The row
+	// renderer and the async fill reuse it instead of resolving it per row.
+	localHost string
+
 	// column indices (host is -1 when no snapshot is foreign)
 	whenCol, sizeCol, deltaCol, rootCol, hostCol int
 }
