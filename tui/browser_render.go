@@ -167,27 +167,34 @@ func (ui *UI) browserSizeCell(st *browserState, i int) string {
 	return ui.browserPendingMarker(sz.state)
 }
 
-// browserDeltaCell renders a row's Δ-versus-● cell: how much bigger the ● view
-// is than this row's folder. Rows with no Δ of their own — the ● cursor's own
-// row, the live row, and other-roots rows — show the undefined "—". Otherwise the
-// row's own size resolves first (its absent/unreadable/filling marker shows
-// through until then); once it has, the Δ still needs ●'s folder size, which may
-// be a number (render the Δ), still filling ("…"), or undefined ("—", because ●
-// sits where it has no folder size, so no Δ will ever exist).
+// browserDeltaCell renders a row's Δ-versus-● cell (● − this row) in the uniform
+// column sign. The ● cursor's own row shows no self-Δ, and an other-roots row has
+// no folder size, so both show the undefined "—". Otherwise the row's own size
+// comes first — the live row's is always known; a covering snapshot's must have
+// resolved (its absent/unreadable/filling marker shows through until then). Given
+// both sizes, the Δ needs ●'s folder size, which may be a number (render the Δ,
+// negative when ● is smaller than this row — legible from the timestamps), still
+// filling ("…"), or undefined ("—", because ● sits where it has no folder size).
 func (ui *UI) browserDeltaCell(st *browserState, i int) string {
 	r := &st.rows[i]
-	if i == st.viewCur || r.kind == browserLiveRow || r.kind == browserOtherRow {
+	if i == st.viewCur || r.kind == browserOtherRow {
 		return ui.dim(snapshotAbsentMarker)
 	}
-	sz := st.sizes[r.listing.Key()]
-	if sz.state != sizeResolved {
-		return ui.browserPendingMarker(sz.state)
+	var rowSize int64
+	if r.kind == browserLiveRow {
+		rowSize = st.cfg.live.size // always known
+	} else {
+		sz := st.sizes[r.listing.Key()]
+		if sz.state != sizeResolved {
+			return ui.browserPendingMarker(sz.state)
+		}
+		rowSize = sz.bytes
 	}
 	viewSize, vstate := ui.browserViewSize(st)
 	//nolint:exhaustive // Why: viewSizeUndefined falls to the default undefined marker
 	switch vstate {
 	case viewSizeKnown:
-		return ui.pickerDelta(viewSize - sz.bytes)
+		return ui.pickerDelta(viewSize - rowSize)
 	case viewSizeFilling:
 		return ui.dim(snapshotSizePlaceholder) // ●'s own size is still resolving
 	default:

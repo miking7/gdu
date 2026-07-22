@@ -472,6 +472,34 @@ func TestBrowserCloseBumpsFillGeneration(t *testing.T) {
 	assert.Nil(t, ui.browser, "closing clears the browser pointer")
 }
 
+// TestBrowserLiveRowShowsDeltaWhenViewElsewhere: when ● sits on a snapshot, the
+// live row shows its Δ vs ● (● − live) rather than the "—" undefined marker — the
+// live size is always known, and it is the headline number when stepping history.
+func TestBrowserLiveRowShowsDeltaWhenViewElsewhere(t *testing.T) {
+	ui := browserTestUI(t)
+	cov := coveringListingsForTest(1)
+	cfg := treeBrowserCfg(focusViewing, cov)
+	cfg.fillTarget = "/root"
+	cfg.curViewLive = false
+	cfg.curViewKey = cov[0].Key() // ● on the snapshot
+	cfg.live = &browserLive{scannedAt: time.Now(), size: 150}
+	st := ui.newBrowserStateForTest(cfg)
+	st.sizes[cov[0].Key()] = browserSize{state: sizeResolved, bytes: 100} // ●'s size
+	require.Equal(t, cov[0].Key(), st.rows[st.viewCur].listing.Key(), "● is on the snapshot")
+	ui.renderBrowserBody(st)
+
+	// The live row is table row 1 (rows index 0). Δ = ●(100) − live(150) = −50.
+	liveDelta := st.table.GetCell(1, st.deltaCol).Text
+	assert.NotContains(t, liveDelta, snapshotAbsentMarker, "the live row's Δ is no longer blank")
+	assert.Contains(t, liveDelta, "50", "Δ vs ● renders (100 − 150)")
+
+	// With ● back on the live row, the live row is the reference and shows "—".
+	st.viewCur = 0
+	ui.renderBrowserBody(st)
+	assert.Contains(t, st.table.GetCell(1, st.deltaCol).Text, snapshotAbsentMarker,
+		"● on the live row leaves its own Δ blank")
+}
+
 // TestBrowserFilledRowRepaintsOnlyThatRow: resolving a non-● snapshot repaints
 // just its own cells; a second snapshot whose size also changed but was not the
 // subject of the call keeps its prior cell — the fill is O(N), not a full-table
