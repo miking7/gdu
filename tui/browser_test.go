@@ -265,6 +265,32 @@ func TestBrowserBaselineNeverRestsOnLiveOrOther(t *testing.T) {
 	assert.Equal(t, browserSnapRow, st.rows[st.baseCur].kind, "◇ never leaves the covering snapshots")
 }
 
+// TestBrowserBraceStepsBaselineNewerOrClears pins the } (newer) gesture on ◇: it
+// skips over ●'s row to a newer covering snapshot when one exists, and clears the
+// baseline only when walking off the newest eligible end — the deliberate "walk
+// the comparison back to nothing" gesture. (The browser skips ●; the tree view's
+// } will instead clear on ●, because a linear timeline can't skip a point.)
+func TestBrowserBraceStepsBaselineNewerOrClears(t *testing.T) {
+	ui := browserTestUI(t)
+
+	// Skip-over: ● sits between ◇ and a newer covering snapshot, so } jumps ◇
+	// over ●'s row rather than clearing.
+	st := ui.newBrowserStateForTest(treeBrowserCfg(focusBaseline, coveringListingsForTest(3)))
+	// rows: live0, cov[0]=1 (newest), cov[1]=2, cov[2]=3 (oldest)
+	st.viewCur = 2 // ● on the middle snapshot
+	st.baseCur = 3 // ◇ on the oldest, below ●
+	ui.browserMoveBase(st, -1)
+	assert.Equal(t, 1, st.baseCur, "} skips ◇ over ●'s row to the newer covering snapshot")
+
+	// Clear-at-end: ◇ on the newest covering snapshot with nothing newer eligible
+	// (only the live row lies above it), so } walks off the end and clears.
+	st2 := ui.newBrowserStateForTest(treeBrowserCfg(focusViewing, coveringListingsForTest(2)))
+	st2.viewCur = 0 // ● on live
+	st2.baseCur = 1 // ◇ on the newest covering snapshot
+	ui.browserMoveBase(st2, -1)
+	assert.Equal(t, -1, st2.baseCur, "} off the newest eligible end clears the baseline")
+}
+
 // TestBrowserViewMayVisitOtherRoots: ● may rest on an other-roots row (view
 // only), unlike ◇.
 func TestBrowserViewMayVisitOtherRoots(t *testing.T) {
