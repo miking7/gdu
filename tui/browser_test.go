@@ -314,6 +314,16 @@ func TestBrowserPageStepsBaselineCursor(t *testing.T) {
 	assert.Equal(t, st.baseCur+1, selRow, "the highlight follows ◇")
 }
 
+// TestHeaderRoleFramesAlign pins the exact role-line frames the tree-view header
+// and the browser share: the glyph, the role word, and the hand-tuned padding
+// that lands both bodies in the same column. If either frame's spacing drifts,
+// the two screens' headers stop lining up — this catches it.
+func TestHeaderRoleFramesAlign(t *testing.T) {
+	ui := browserTestUI(t)
+	assert.Equal(t, " ● Viewing   BODY", ui.viewingFrame("BODY"))
+	assert.Equal(t, " ◇ Baseline  BODY", ui.baselineFrame("BODY"))
+}
+
 // browserHeaders reads the browser table's column-header row.
 func browserHeaders(table *tview.Table) []string {
 	var hs []string

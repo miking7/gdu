@@ -10,7 +10,6 @@ import (
 
 	"github.com/dundee/gdu/v5/internal/common"
 	"github.com/dundee/gdu/v5/pkg/parquet"
-	"github.com/dundee/gdu/v5/pkg/path"
 	"github.com/dundee/gdu/v5/report"
 )
 
@@ -284,22 +283,22 @@ func (ui *UI) updateBrowserChrome(st *browserState) {
 // tree view, reflecting the pending cursor positions so the state is always
 // readable before Enter commits it.
 func (ui *UI) browserHeaderText(st *browserState) string {
-	line := fmt.Sprintf(" %s Viewing   %s", ui.viewingGlyph(), ui.browserViewingWhat(st))
+	line := ui.viewingFrame(ui.browserViewingWhat(st))
 	if st.cfg.baselineOnly {
 		return line
 	}
-	return line + "\n" + fmt.Sprintf(" %s Baseline  %s", ui.baselineGlyph(), ui.browserBaselineDesc(st))
+	return line + "\n" + ui.baselineFrame(ui.browserBaselineDesc(st))
 }
 
-// browserViewingWhat names the tree ● points at: the live disk or a snapshot.
+// browserViewingWhat names the tree ● points at: the live disk or a snapshot. The
+// snapshot form is the shared header label; the live form is browser-specific (no
+// root — the scope is already in the title).
 func (ui *UI) browserViewingWhat(st *browserState) string {
 	r := &st.rows[st.viewCur]
 	if r.kind == browserLiveRow {
 		return "live — scanned " + st.cfg.live.scannedAt.Local().Format(headerClockLayout)
 	}
-	return fmt.Sprintf("snapshot %s · %s · read-only",
-		r.listing.ScanTs.Local().Format(headerTimeLayout),
-		path.ShortenPath(r.listing.ScanRoot, headerRootMaxLen))
+	return snapshotViewLabel(r.listing.ScanTs, r.listing.ScanRoot)
 }
 
 // browserBaselineDesc renders the ◇ line's body: the applied baseline unchanged,

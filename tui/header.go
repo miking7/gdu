@@ -56,6 +56,27 @@ func (ui *UI) baselineGlyph() string {
 	return "◇"
 }
 
+// snapshotViewLabel renders the "snapshot <time> · <root> · read-only" phrase on
+// the Viewing line. The tree-view header and the browser both name a snapshot the
+// same way, so they share this to keep the copy from drifting.
+func snapshotViewLabel(scanTs time.Time, scanRoot string) string {
+	return fmt.Sprintf("snapshot %s · %s · read-only",
+		scanTs.Local().Format(headerTimeLayout),
+		path.ShortenPath(scanRoot, headerRootMaxLen))
+}
+
+// viewingFrame and baselineFrame wrap a body in the header's two role lines: the
+// glyph, the role word, and hand-tuned padding that aligns both bodies in the
+// same column ("Viewing" + 3 spaces and "Baseline" + 2 both reach column 10). The
+// tree-view header and the browser share them so that alignment cannot drift.
+func (ui *UI) viewingFrame(body string) string {
+	return fmt.Sprintf(" %s Viewing   %s", ui.viewingGlyph(), body)
+}
+
+func (ui *UI) baselineFrame(body string) string {
+	return fmt.Sprintf(" %s Baseline  %s", ui.baselineGlyph(), body)
+}
+
 // updateHeader renders the two-slot header for the current View/Baseline state
 // and grows the header row to two lines whenever a Baseline is set. Safe to
 // call before the widgets exist (options run during CreateUI).
@@ -102,13 +123,13 @@ func (ui *UI) viewingLine() string {
 	}
 	what := ui.viewingWhat()
 	if ui.viewIsLive() {
-		return fmt.Sprintf(" %s Viewing   %s", ui.viewingGlyph(), what)
+		return ui.viewingFrame(what)
 	}
 	hints := "[ ] step"
 	if !ui.inDiffMode() && ui.returnView != nil && ui.currentView != ui.returnView {
 		hints += " · Esc return"
 	}
-	return fmt.Sprintf(" %s Viewing   %s — %s", ui.viewingGlyph(), what, hints)
+	return ui.viewingFrame(fmt.Sprintf("%s — %s", what, hints))
 }
 
 // viewingWhat names the tree being viewed: an archived snapshot, an
@@ -119,9 +140,7 @@ func (ui *UI) viewingWhat() string {
 	v := ui.currentView
 	switch {
 	case v != nil && v.snapshot != nil:
-		return fmt.Sprintf("snapshot %s · %s · read-only",
-			v.snapshot.ScanTs.Local().Format(headerTimeLayout),
-			path.ShortenPath(v.snapshot.ScanRoot, headerRootMaxLen))
+		return snapshotViewLabel(v.snapshot.ScanTs, v.snapshot.ScanRoot)
 	case v != nil && v.importLabel != "":
 		return fmt.Sprintf("import %s · read-only", v.importLabel)
 	}
@@ -150,11 +169,10 @@ func (ui *UI) baselineLine() string {
 	if ui.diffHidden {
 		tail = "Δ hidden · Tab compare"
 	}
-	return fmt.Sprintf(" %s Baseline  %s (%s ago) — %s · Esc clear",
-		ui.baselineGlyph(),
+	return ui.baselineFrame(fmt.Sprintf("%s (%s ago) — %s · Esc clear",
 		ui.baselineTs.Local().Format(headerTimeLayout),
 		humanAge(time.Since(ui.baselineTs)),
-		tail)
+		tail))
 }
 
 // setHeaderHeight resizes the grid's header row (1↔2 lines), preserving the
