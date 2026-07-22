@@ -56,14 +56,18 @@ func (ui *UI) newBrowserStateForTest(cfg *browserConfig) *browserState {
 }
 
 // treeBrowserCfg is a tree-view-shaped config: a live row + covering snapshots,
-// with the fill disabled so tests need no event loop.
+// with the fill disabled so tests need no event loop. It wires no-op baseline
+// hooks so it is a two-cursor browser (viewOnly() is false, as the real tree
+// doors are); tests that assert on baseline application override them with spies.
 func treeBrowserCfg(focus browserFocus, covering []report.SnapshotListing) *browserConfig {
 	return &browserConfig{
-		scopeLabel:   "/root",
-		covering:     covering,
-		live:         &browserLive{scannedAt: time.Now(), size: 500},
-		initialFocus: focus,
-		curViewLive:  true,
+		scopeLabel:    "/root",
+		covering:      covering,
+		live:          &browserLive{scannedAt: time.Now(), size: 500},
+		initialFocus:  focus,
+		curViewLive:   true,
+		applyBaseline: func(_ *report.SnapshotListing) {},
+		clearBaseline: func() {},
 	}
 }
 

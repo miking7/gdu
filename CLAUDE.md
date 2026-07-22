@@ -205,7 +205,7 @@ gdu can export/import scans as Apache Parquet and auto-archive them for trend an
   one window behind every door, carrying two always-visible cursors — `●` Viewing and `◇` Baseline.
   Tree-view `O`/`B` open it (`showSnapshotBrowser`; `●`/`◇` focused respectively), the launcher's `S`
   opens it scoped to a row (no live row), and the `-f` multi-snapshot chooser is the same component
-  (`baselineOnly`, `escQuits`, no fill). `Tab` flips focus, `[ ]` step `●` and `{ }` step `◇`
+  (view-only — `cfg.viewOnly()`, i.e. no `applyBaseline` hook — plus `escQuits`, no fill). `Tab` flips focus, `[ ]` step `●` and `{ }` step `◇`
   regardless of focus (skipping each other's row — the two never collide), `Enter` applies whatever
   changed (view then baseline, chained through `openSnapshotView`'s `then`), `Esc` discards. The live
   tree is a pinned first row wired to the go-live flow; covering snapshots take both cursors, other

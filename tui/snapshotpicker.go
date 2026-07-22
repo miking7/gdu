@@ -44,13 +44,14 @@ func (ui *UI) showStartupSnapshotPicker(f *os.File, snapshots []parquet.Snapshot
 	}
 
 	ui.showBrowser(&browserConfig{
-		scopeLabel:   filepath.Base(f.Name()),
-		covering:     listings,
-		baselineOnly: true, // the file's snapshots are the ● view; there is no baseline here
-		escQuits:     true, // the startup chooser has nothing to fall back to
+		scopeLabel: filepath.Base(f.Name()),
+		covering:   listings,
+		escQuits:   true, // the startup chooser has nothing to fall back to
 		hint: func(l *report.SnapshotListing) string {
 			return fmt.Sprintf(" gdu -f %s --snapshot %s", f.Name(), parquet.FormatSnapshotTime(&l.SnapshotInfo))
 		},
+		// No applyBaseline hook: the file's snapshots are the ● view and there is
+		// nothing to compare against, which is exactly what viewOnly() keys off.
 		openView: func(l *report.SnapshotListing, _ func()) {
 			ui.loadSnapshotFromFile(f, &l.SnapshotInfo)
 		},

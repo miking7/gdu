@@ -78,7 +78,6 @@ type browserConfig struct {
 	fillTarget string
 
 	initialFocus browserFocus
-	baselineOnly bool            // -f: no ◇ cursor, no baseline apply
 	escQuits     bool            // -f startup: Esc/q quit the app
 	refocus      tview.Primitive // focus target on Esc when the browser had no live tree
 
@@ -91,10 +90,17 @@ type browserConfig struct {
 	// hooks
 	hint          func(l *report.SnapshotListing) string // per-● teaching line (CLI equivalent)
 	openView      func(l *report.SnapshotListing, then func())
-	goLive        func(then func()) // live-row Enter; nil when there is no live row
-	applyBaseline func(l *report.SnapshotListing)
+	goLive        func(then func())               // live-row Enter; nil when there is no live row
+	applyBaseline func(l *report.SnapshotListing) // nil ⇒ view-only (no ◇ cursor); see viewOnly
 	clearBaseline func()
 }
+
+// viewOnly reports whether this browser has only the ● cursor — no ◇, no
+// baseline to apply. It is the -f startup chooser (a snapshot file is opened
+// as the View; there is nothing to compare against), and it is exactly the
+// configs that wire no applyBaseline hook, so the capability derives from the
+// hook rather than a separate flag that could drift from it.
+func (cfg *browserConfig) viewOnly() bool { return cfg.applyBaseline == nil }
 
 // browserState holds the live browser screen. The pointer stored on the UI
 // doubles as the async-fill generation guard, like the launcher's.
@@ -179,7 +185,7 @@ func (ui *UI) showBrowser(cfg *browserConfig) {
 // headLineCount is the browser header's height: one line for ●, plus one for ◇
 // unless the config has no baseline cursor at all.
 func (cfg *browserConfig) headLineCount() int {
-	if cfg.baselineOnly {
+	if cfg.viewOnly() {
 		return 1
 	}
 	return 2
@@ -192,7 +198,7 @@ func (cfg *browserConfig) keyHintText() string {
 	if cfg.escQuits {
 		cancel = "Esc quit"
 	}
-	if cfg.baselineOnly {
+	if cfg.viewOnly() {
 		return fmt.Sprintf(" [ ] move · Enter open · %s", cancel)
 	}
 	return fmt.Sprintf(" Tab move ●/◇ · [ ] ● · { } ◇ · Enter apply · %s", cancel)
@@ -249,7 +255,7 @@ func (ui *UI) placeBrowserCursors(st *browserState) {
 	// baseline door (◇-focused) opened the browser, which pre-arms the snapshot
 	// immediately older than ● — the one-keypress "compare vs previous" default.
 	switch {
-	case cfg.baselineOnly:
+	case cfg.viewOnly():
 		st.focus = focusViewing
 	case cfg.hasBaseline:
 		if r := st.baselineRowForKey(cfg.baselineKey); r >= 0 {

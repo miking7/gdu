@@ -291,7 +291,7 @@ func (ui *UI) updateBrowserChrome(st *browserState) {
 // readable before Enter commits it.
 func (ui *UI) browserHeaderText(st *browserState) string {
 	line := ui.viewingFrame(ui.browserViewingWhat(st))
-	if st.cfg.baselineOnly {
+	if st.cfg.viewOnly() {
 		return line
 	}
 	return line + "\n" + ui.baselineFrame(ui.browserBaselineDesc(st))

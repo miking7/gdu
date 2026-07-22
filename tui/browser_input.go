@@ -108,7 +108,7 @@ func (ui *UI) browserMoveView(st *browserState, dir int) {
 // ◇ off the newest end clears it again — the in-browser "no baseline" gesture,
 // mirroring the tree view's } onto ●.
 func (ui *UI) browserMoveBase(st *browserState, dir int) {
-	if st.cfg.baselineOnly {
+	if st.cfg.viewOnly() {
 		return
 	}
 	if st.baseCur < 0 {
@@ -193,7 +193,7 @@ func (ui *UI) browserPage(st *browserState, dir int) {
 // it first engages the default, then walks up to step ◇-eligible rows, clamped
 // at both ends — paging never clears (that stays the single-step } gesture).
 func (ui *UI) browserPageBase(st *browserState, dir, step int) {
-	if st.cfg.baselineOnly {
+	if st.cfg.viewOnly() {
 		return
 	}
 	engaged := false
@@ -222,7 +222,7 @@ func (ui *UI) browserPageBase(st *browserState, dir, step int) {
 // engages it at the default when it was off; if there is nowhere valid for ◇,
 // focus stays on ●.
 func (ui *UI) browserFlipFocus(st *browserState) {
-	if st.cfg.baselineOnly {
+	if st.cfg.viewOnly() {
 		return
 	}
 	if st.focus == focusViewing {
@@ -296,7 +296,7 @@ func (ui *UI) applyBrowser(st *browserState) {
 		pendingBase = &l
 	}
 	applyBase := func() {
-		if cfg.baselineOnly {
+		if cfg.viewOnly() {
 			return
 		}
 		// An other-roots ● view covers a different tree, so no baseline can apply
