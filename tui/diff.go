@@ -13,8 +13,10 @@ import (
 
 	"github.com/dundee/gdu/v5/build"
 	"github.com/dundee/gdu/v5/pkg/analyze"
+	"github.com/dundee/gdu/v5/pkg/device"
 	"github.com/dundee/gdu/v5/pkg/fs"
 	"github.com/dundee/gdu/v5/pkg/parquet"
+	"github.com/dundee/gdu/v5/report"
 )
 
 // Diff-mode marker colors. Growth is warm (the problem you hunt), shrink cool,
@@ -75,6 +77,10 @@ func (ui *UI) SetBaseline(b *analyze.Baseline, info *parquet.SnapshotInfo) {
 	ui.baselineTs = info.ScanTs
 	ui.baselineKey = info.Key()
 	ui.diffHidden = false
+	// Arm the coverage latch when the baseline covers the shown folder, so E7's
+	// navigation-time auto-clear applies to interactively chosen baselines but
+	// never fires on a --baseline-root override that deliberately never covers.
+	ui.baselineEverCovered = ui.currentDir != nil && ui.baselineCoversFolder(ui.currentDirPath)
 	ui.resetRowSelection()
 	ui.updateHeader()
 	if ui.currentDir != nil {
@@ -82,16 +88,65 @@ func (ui *UI) SetBaseline(b *analyze.Baseline, info *parquet.SnapshotInfo) {
 	}
 }
 
-// clearBaseline leaves compare mode and restores the normal view.
-func (ui *UI) clearBaseline() {
+// clearBaselineState resets the baseline fields without re-rendering — the
+// shared core of clearBaseline (which also renders) and enforceBaselineCoverage
+// (which lets its caller render once and flash after). It ends any ◇ walk in
+// progress (baseStepTarget) so a later step re-derives cleanly.
+func (ui *UI) clearBaselineState() {
 	ui.baseline = nil
 	ui.baselineTs = time.Time{}
 	ui.baselineKey = parquet.SnapshotKey{}
+	ui.baselineEverCovered = false
+	ui.baseStepTarget = -1
 	ui.resetRowSelection()
+}
+
+// clearBaseline leaves compare mode and restores the normal view.
+func (ui *UI) clearBaseline() {
+	ui.clearBaselineState()
 	ui.updateHeader()
 	if ui.currentDir != nil {
 		ui.showDir()
 	}
+}
+
+// baselineCoversFolder reports whether the active baseline's snapshot root
+// mount-accurately covers folder — the same rule the browser, timeline, and CLI
+// use. Runs on the event loop: the mount comes from the captured device list
+// (empty degrades to plain path-covering), never a getter query.
+func (ui *UI) baselineCoversFolder(folder string) bool {
+	if ui.baseline == nil || folder == "" {
+		return false
+	}
+	mount := ""
+	if d := device.ForPath(ui.devices, folder); d != nil {
+		mount = d.MountPoint
+	}
+	return report.RootCoversWithinMount(ui.baselineKey.Root, folder, mount)
+}
+
+// enforceBaselineCoverage drops the baseline when navigation has left its
+// coverage (E7), reporting whether it did. It fires only on a covering→
+// not-covering transition (tracked by baselineEverCovered), so a baseline that
+// never covered — the --baseline-root cross-volume override — is never cleared
+// out from under the user, and it is a no-op mid-preview (a partial tree is not a
+// real folder change; that is stage 5's concern). It clears state only: the
+// caller renders once (showDir then sees no baseline) and flashes
+// baselineUncoveredFlash afterwards, so the flash is not clobbered by showDir's
+// own footer. Must run on the event loop, before the folder is rendered.
+func (ui *UI) enforceBaselineCoverage(folder string) (cleared bool) {
+	if ui.baseline == nil || ui.previewing || folder == "" {
+		return false
+	}
+	if ui.baselineCoversFolder(folder) {
+		ui.baselineEverCovered = true
+		return false
+	}
+	if !ui.baselineEverCovered {
+		return false
+	}
+	ui.clearBaselineState()
+	return true
 }
 
 // resetRowSelection clears the mark and ignore maps, which are keyed by table

@@ -433,6 +433,9 @@ func (ui *UI) handleMainActions(key *tcell.EventKey) *tcell.EventKey {
 	case '[', ']':
 		ui.handleStepKey(key.Rune())
 		return nil
+	case '{', '}':
+		ui.handleBraceKey(key.Rune())
+		return nil
 	case 'D':
 		// D joins s/n/C/M as a sort key, but only the compare view has a Δ to
 		// sort by; elsewhere it teaches the way into a comparison.
@@ -447,10 +450,13 @@ func (ui *UI) handleMainActions(key *tcell.EventKey) *tcell.EventKey {
 }
 
 // Teach-flash copy for the compare gestures when there is nothing to compare.
-// It names the key that opens the browser on its baseline door (B); this is
-// transitional copy, expected to be rewritten when the baseline-stepping keys
-// are added.
-const noBaselineNotice = "no baseline set — B to compare"
+// noBaselineNotice teaches both ways in: { enters the previous-snapshot
+// comparison in one press, B opens the browser to choose one. noBaselineSortNotice
+// is D's shorter form, since D only ever wants a comparison to sort by.
+const (
+	noBaselineNotice     = "no baseline — { compare previous · B choose"
+	noBaselineSortNotice = "no baseline — { to compare"
+)
 
 // handleTabToggle flips the compare view's Δ rendering on and off — the tree
 // screen's counterpart pair. With no baseline set there is nothing to compare,
@@ -483,7 +489,7 @@ func (ui *UI) noDeltaSortNotice() string {
 	if ui.inDiffMode() {
 		return "Δ hidden — Tab to compare"
 	}
-	return noBaselineNotice
+	return noBaselineSortNotice
 }
 
 // handleStepKey maps the timeline keys to steps: `[` older, `]` newer.
@@ -509,6 +515,12 @@ func (ui *UI) handleLoadingPageKeys(key *tcell.EventKey) *tcell.EventKey {
 	}
 	if (key.Rune() == '[' || key.Rune() == ']') && (ui.scanning || ui.timelineActive) {
 		ui.handleStepKey(key.Rune())
+		return nil
+	}
+	// { } keep stepping the baseline while a step-load's loading page is up, but
+	// stay inert on a running scan's progress page (pre-arming is stage-5 work).
+	if (key.Rune() == '{' || key.Rune() == '}') && front == loadingPage && ui.timelineActive {
+		ui.handleBraceKey(key.Rune())
 		return nil
 	}
 	// On the scan's progress screen Esc backs out of a recording scan, raising

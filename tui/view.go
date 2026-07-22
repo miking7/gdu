@@ -59,11 +59,19 @@ func (ui *UI) applyView(v *view, wantPath, wantSel string) (shownPath string, ex
 	ui.markedRows = make(map[int]struct{})
 	ui.ignoredRows = make(map[int]struct{})
 
+	// A view switch can land on a folder the baseline no longer covers (stepping,
+	// go-live to an uncovered subtree, a re-rooted scan) — drop it so the
+	// uncovered diff is never drawn (E7); the flash comes after showDir, which
+	// would otherwise overwrite the footer.
+	cleared := ui.enforceBaselineCoverage(dir.GetPath())
 	ui.showDir()
 	if wantSel != "" {
 		ui.selectItemByName(wantSel)
 	}
 	ui.updateHeader()
+	if cleared {
+		ui.flashFooter(baselineUncoveredFlash)
+	}
 	return dir.GetPath(), exact
 }
 

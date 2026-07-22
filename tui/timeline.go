@@ -25,6 +25,14 @@ const (
 	oldestNotice       = "already at the oldest snapshot"
 	scanCompleteNotice = "scan complete — ] to view"
 
+	// baselineClearedFlash announces a { / } step that walked the baseline back
+	// onto the viewed position, or off the newest end — the "walk the comparison
+	// back to nothing" gesture that mirrors { entering it. viewingBaselineFlash
+	// announces a [ / ] step that landed the view on the baseline snapshot itself,
+	// where the diff is honestly all-unchanged.
+	baselineClearedFlash = " baseline cleared"
+	viewingBaselineFlash = " viewing the baseline snapshot"
+
 	// scanProgressPage is the scan's progress page — the timeline's live
 	// position while a scan runs. loadingPage is the separate page
 	// picker and step loads put up, so they never collide with a running
@@ -46,6 +54,18 @@ func (ui *UI) resetTimeline() {
 	ui.timelineEntries = nil
 	ui.timelineRoot = ""
 	ui.stepLoading = false
+	ui.baseStepTarget = -1
+	ui.baseStepLoading = false
+	ui.pages.RemovePage(loadingPage)
+}
+
+// dismissLoadingPage removes the shared loading page unless an async view or
+// baseline load still needs it up: a concurrent [ ] and { } load share the one
+// page, so the first to land must not pull it out from under the other.
+func (ui *UI) dismissLoadingPage() {
+	if ui.stepLoading || ui.baseStepLoading {
+		return
+	}
 	ui.pages.RemovePage(loadingPage)
 }
 
@@ -65,7 +85,7 @@ func (ui *UI) handleStep(dir int) {
 	// or when the pinned fold decision went stale — a delete or refresh
 	// un-folds the just-saved snapshot and the walk must see it.
 	if !ui.timelineActive || !report.PathCoveredBy(ui.timelineRoot, folder) || ui.timelineFoldStale() {
-		ui.beginStepping(dir, folder)
+		ui.ensureTimelineThen(folder, func() { ui.stepTo(ui.timelinePos + dir) })
 		return
 	}
 	ui.stepTo(ui.stepTarget + dir)
@@ -90,18 +110,21 @@ func (ui *UI) stepFolder() string {
 	return ""
 }
 
-// beginStepping lists the archive off the event loop, pins the timeline, and
-// performs the first step. Membership: snapshots whose root covers folder;
-// the pin goes to the current snapshot View's root when it is one of them,
-// else to the deepest covering root.
-func (ui *UI) beginStepping(dir int, folder string) {
+// ensureTimelineThen makes sure a timeline covering folder is pinned, then runs
+// then() on the event loop. It lists the archive off the event loop and pins
+// (membership: snapshots whose root covers folder; the pin goes to the current
+// snapshot View's root when it is one of them, else to the deepest covering
+// root). then() does not run when there is no walkable covering history — the
+// no-coverage notice shows instead. Shared by the view walk ([ ]) and the
+// baseline walk ({ }), so both derive the same pinned timeline.
+func (ui *UI) ensureTimelineThen(folder string, then func()) {
 	gen := ui.stepGen
 	devices, getter := ui.devices, ui.getter // captured on the loop for off-loop mount resolution
 	ui.showLoadingPage("Reading snapshots...", " Snapshots ")
 	ui.goPickerWork(func() {
 		covering, err := ui.coveringForTarget(folder, devices, getter)
 		ui.app.QueueUpdateDraw(func() {
-			ui.pages.RemovePage(loadingPage)
+			ui.dismissLoadingPage()
 			if gen != ui.stepGen {
 				return // superseded (Esc, O, a new scan) while listing
 			}
@@ -121,7 +144,7 @@ func (ui *UI) beginStepping(dir int, folder string) {
 				ui.headerNoticeNow(noCoveringNotice)
 				return
 			}
-			ui.stepTo(ui.timelinePos + dir)
+			then()
 		})
 	})
 }
@@ -335,7 +358,7 @@ func (ui *UI) startStepLoad(target int) {
 				return // superseded; a newer walk owns the screen
 			}
 			ui.stepLoading = false
-			ui.pages.RemovePage(loadingPage)
+			ui.dismissLoadingPage()
 			if err != nil {
 				ui.showErr("Error loading snapshot", err)
 				return
@@ -344,8 +367,19 @@ func (ui *UI) startStepLoad(target int) {
 			info := entry.SnapshotInfo
 			v := &view{tree: tree, topPath: entry.ScanRoot, snapshot: &info}
 			ui.timelinePos = target
+			hadBaseline := ui.baseline != nil
 			shown, exact := ui.applyView(v, wantPath, wantSel)
-			ui.flashFooter(ui.stepMicroDiff(ui.snapshotFooter(), shown, prevPath, prevSize, hadPrev))
+			switch {
+			case hadBaseline && ui.baseline == nil:
+				// applyView cleared the baseline (the step left its coverage) and
+				// already flashed why — don't overwrite that with a micro-diff.
+			case ui.baseline != nil && entry.Key() == ui.baselineKey:
+				// The view landed on the baseline snapshot itself: an honest
+				// all-unchanged diff (E5), not a "vs previous" micro-diff.
+				ui.flashFooter(viewingBaselineFlash)
+			default:
+				ui.flashFooter(ui.stepMicroDiff(ui.snapshotFooter(), shown, prevPath, prevSize, hadPrev))
+			}
 			if !exact {
 				ui.headerNoticeNow(fmt.Sprintf("%s did not exist at %s — showing %s",
 					wantPath, info.ScanTs.Local().Format(headerTimeLayout), shown))
@@ -414,4 +448,172 @@ func (ui *UI) showLoadingPage(text, title string) {
 			AddItem(nil, 10, 1, false), 0, 50, false).
 		AddItem(nil, 0, 1, false)
 	ui.pages.AddPage(loadingPage, flex, true, true)
+}
+
+// Baseline stepping: `{` walks the ◇ Baseline older, `}` newer, along the same
+// pinned covering timeline the view walks. It is deliberately unlike the
+// browser's `{` `}`: the browser's free two-cursor surface skips ◇ over ●, but a
+// linear timeline can't skip a point, so ◇ stepping onto ●'s position — or off
+// the newest end — clears the comparison, the "walk it back to nothing" gesture
+// that mirrors `{` entering one. ◇ never rests on the live end and never equals ●.
+
+// handleBraceKey maps the baseline-stepping keys: `{` older, `}` newer.
+func (ui *UI) handleBraceKey(r rune) {
+	if r == '{' {
+		ui.handleBaselineStep(-1)
+	} else {
+		ui.handleBaselineStep(1)
+	}
+}
+
+// handleBaselineStep begins or continues a ◇ walk: it ensures the covering
+// timeline is pinned (reusing the view walk's off-loop derivation), then steps
+// the baseline. Must run on the event loop.
+func (ui *UI) handleBaselineStep(dir int) {
+	if ui.snapshotsDir == "" {
+		return
+	}
+	folder := ui.stepFolder()
+	if folder == "" {
+		return
+	}
+	// `}` with no baseline points the comparison backward to nothing that exists
+	// yet — teach the `{` that enters one rather than silently doing nothing.
+	if dir > 0 && ui.baseline == nil {
+		ui.headerNoticeNow(noBaselineNotice)
+		return
+	}
+	if !ui.timelineActive || !report.PathCoveredBy(ui.timelineRoot, folder) || ui.timelineFoldStale() {
+		ui.ensureTimelineThen(folder, func() { ui.baselineStep(dir) })
+		return
+	}
+	ui.baselineStep(dir)
+}
+
+// baselineStep moves the ◇ cursor one step (dir −1 older, +1 newer) from its
+// current position and applies the clear rules. Runs on the event loop with a
+// pinned timeline.
+func (ui *UI) baselineStep(dir int) {
+	entries := ui.timelineEntries
+	viewPos := ui.effectiveViewPos()
+	target := ui.baselinePos(viewPos) + dir
+
+	switch {
+	case target < 0:
+		ui.headerNoticeNow(oldestNotice) // nothing older than the oldest snapshot
+	case target >= len(entries) || target == viewPos:
+		// ◇ never rests on the live end or on ●'s position: walking it there
+		// clears the comparison (E4, and the `}`-off-the-newest-end gesture).
+		ui.clearBaselineByStep()
+	default:
+		ui.baseStepTo(target)
+	}
+}
+
+// effectiveViewPos is ●'s timeline index — where it is, or where an in-flight
+// `[`/`]` step is heading — so the baseline anchors against the view's
+// destination, not a position it is about to leave.
+func (ui *UI) effectiveViewPos() int {
+	if ui.stepLoading {
+		return ui.stepTarget
+	}
+	return ui.timelinePos
+}
+
+// baselinePos is the ◇ cursor's current timeline index. While a `{`/`}` load is
+// in flight it is that load's target; with no baseline set it is ●'s position, so
+// the first `{` lands on the snapshot immediately before the view (E3, "compare
+// vs previous"); otherwise it is the entry matching the baseline's identity, or —
+// when the baseline lies off this pinned timeline (set over a different covering
+// root) — the insertion point of its timestamp.
+func (ui *UI) baselinePos(viewPos int) int {
+	switch {
+	case ui.baseStepLoading:
+		return ui.baseStepTarget
+	case ui.baseline == nil:
+		return viewPos
+	}
+	if i := ui.baselineEntryIndex(); i >= 0 {
+		return i
+	}
+	return ui.baselineInsertionPos()
+}
+
+// baselineEntryIndex is the pinned timeline index of the entry matching the
+// active baseline's identity, or -1 when the baseline is off this timeline.
+func (ui *UI) baselineEntryIndex() int {
+	for i := range ui.timelineEntries {
+		if ui.timelineEntries[i].Key() == ui.baselineKey {
+			return i
+		}
+	}
+	return -1
+}
+
+// baselineInsertionPos is the index of the first pinned entry strictly newer than
+// the current baseline — where a baseline off this timeline sits temporally, so
+// `{`/`}` still move it in time order.
+func (ui *UI) baselineInsertionPos() int {
+	for i := range ui.timelineEntries {
+		if ui.timelineEntries[i].ScanTs.After(ui.baselineTs) {
+			return i
+		}
+	}
+	return len(ui.timelineEntries)
+}
+
+// clearBaselineByStep drops the comparison as the terminal move of a `{`/`}` walk
+// and flashes why.
+func (ui *UI) clearBaselineByStep() {
+	ui.clearBaseline()
+	ui.flashFooter(baselineClearedFlash)
+}
+
+// baseStepTo moves the ◇ walk's target and loads it, serialized like the view
+// walk: one load at a time, further presses retarget the chain.
+func (ui *UI) baseStepTo(target int) {
+	ui.baseStepTarget = target
+	if ui.baseStepLoading {
+		return // the in-flight load chains to the new target when it lands
+	}
+	ui.advanceBaselineStep()
+}
+
+// advanceBaselineStep loads the current ◇ target unless the walk was cleared.
+func (ui *UI) advanceBaselineStep() {
+	if ui.baseStepTarget < 0 {
+		return
+	}
+	ui.startBaselineLoad(ui.baseStepTarget)
+}
+
+// startBaselineLoad reads the snapshot at target as the baseline off the event
+// loop, behind the loading page, and applies it when it lands (dropping
+// superseded or retargeted loads). Mirrors startStepLoad for the ◇ cursor.
+func (ui *UI) startBaselineLoad(target int) {
+	entry := ui.timelineEntries[target] // copy; the goroutine outlives steps
+	gen := ui.stepGen
+	ui.baseStepLoading = true
+	ui.showLoadingPage("Loading baseline...", " Baseline ")
+
+	ui.goPickerWork(func() {
+		b, err := ui.loadBaseline(&entry)
+		ui.app.QueueUpdateDraw(func() {
+			if gen != ui.stepGen {
+				return // superseded; baseStepLoading was cleared by resetTimeline
+			}
+			ui.baseStepLoading = false
+			ui.dismissLoadingPage()
+			if err != nil {
+				ui.showErr("Error loading baseline", err)
+				return
+			}
+			if ui.baseStepTarget != target {
+				ui.advanceBaselineStep() // the user kept stepping while this loaded
+				return
+			}
+			info := entry.SnapshotInfo
+			ui.SetBaseline(b, &info)
+		})
+	})
 }

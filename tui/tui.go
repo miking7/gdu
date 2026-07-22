@@ -117,6 +117,12 @@ type UI struct {
 	// tell same-instant snapshots of different roots apart. Zero when no
 	// snapshot-derived baseline is set.
 	baselineKey parquet.SnapshotKey
+	// baselineEverCovered latches true once the baseline is observed covering the
+	// shown folder. The navigation-time auto-clear (leaving a baseline's coverage
+	// drops it) fires only on a covering→not-covering transition, so a baseline
+	// that never covers — the --baseline-root cross-volume override — is never
+	// auto-cleared out from under the user.
+	baselineEverCovered bool
 	// diffHidden is the Tab peek toggle: with a baseline set the tree still
 	// renders plain rows when true. inDiffMode() (a baseline exists) drives the
 	// header's two lines and the Esc ladder; renderingDelta() (a baseline exists
@@ -155,6 +161,13 @@ type UI struct {
 	stepTarget      int
 	stepLoading     bool
 	stepGen         uint64
+	// baseline stepping ({ }): the ◇ cursor walks the same pinned timeline as ●
+	// with its own target index into timelineEntries (-1 when no ◇ walk is
+	// engaged) and its own in-flight flag, sharing stepGen as the supersession
+	// guard. ◇'s applied position is the baseline's identity (baselineKey); this
+	// tracks only where a live walk is heading while its load is in flight.
+	baseStepTarget  int
+	baseStepLoading bool
 	// scan-wait state: scanning is true while a chosen scan runs (event
 	// loop only), scanningRoot its root, scanNudge the progress screen's
 	// time-travel hint line, scanningLabel the right-edge footer indicator.
@@ -263,6 +276,7 @@ func CreateUI(
 		defaultSortOrder:        "desc",
 		diffSortBy:              deltaSortKey,
 		diffSortOrder:           descOrder,
+		baseStepTarget:          -1,
 		ignoredRows:             make(map[int]struct{}),
 		markedRows:              make(map[int]struct{}),
 		exportName:              "export.json",
@@ -603,7 +617,15 @@ func (ui *UI) fileItemSelected(row, column int) {
 	ui.hideTypeFilterInput()
 	ui.markedRows = make(map[int]struct{})
 	ui.ignoredRows = make(map[int]struct{})
+	// Navigating up out of the baseline's coverage drops the comparison so the
+	// uncovered diff is never drawn (E7); the header collapses to one line and the
+	// flash comes after showDir, which would otherwise overwrite the footer.
+	cleared := ui.enforceBaselineCoverage(selectedDir.GetPath())
 	ui.showDir()
+	if cleared {
+		ui.updateHeader()
+		ui.flashFooter(baselineUncoveredFlash)
+	}
 
 	// while previewing a mid-scan snapshot there is no stable top dir to anchor
 	// the "select last visited" logic to, so just render the navigated dir

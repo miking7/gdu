@@ -176,11 +176,15 @@ func (ui *UI) pickerDelta(delta int64) string {
 // loading page — a compacted whole-disk snapshot never freezes the UI on select.
 func (ui *UI) setBaselineFromListing(l *report.SnapshotListing) {
 	listing := *l // copy; the goroutine outlives the covering slice's row
+	gen := ui.stepGen
 	ui.showLoadingPage("Loading baseline...", " Baseline ")
 	ui.goPickerWork(func() {
 		b, err := ui.loadBaseline(&listing)
 		ui.app.QueueUpdateDraw(func() {
-			ui.pages.RemovePage(loadingPage)
+			ui.dismissLoadingPage()
+			if gen != ui.stepGen {
+				return // the view changed under us while loading; drop the stale baseline
+			}
 			if err != nil {
 				ui.showErr("Error loading baseline", err)
 			} else {
@@ -216,7 +220,7 @@ func (ui *UI) openSnapshotView(l *report.SnapshotListing, wantPath, wantSel stri
 	ui.goPickerWork(func() {
 		tree, err := ui.loadListingTree(&listing)
 		ui.app.QueueUpdateDraw(func() {
-			ui.pages.RemovePage(loadingPage)
+			ui.dismissLoadingPage()
 			if gen != ui.stepGen {
 				return // superseded while loading
 			}
