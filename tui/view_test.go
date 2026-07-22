@@ -522,8 +522,8 @@ func TestReadAnalysisJSONIsReadOnlyImportView(t *testing.T) {
 	assert.Contains(t, ui.header.GetText(false), "import (stdin)")
 }
 
-// TestOpenPickerOpensSnapshotView: O lists the whole archive and Enter opens
-// the chosen snapshot as the View.
+// TestOpenPickerOpensSnapshotView: O opens the snapshot browser (covering roots
+// plus other roots), and opening a snapshot shows it as the View.
 func TestOpenPickerOpensSnapshotView(t *testing.T) {
 	dir := t.TempDir()
 	writeArchiveSnapshot(t, dir, "s1.parquet", "/root", 10, 10, ts1)
@@ -532,7 +532,7 @@ func TestOpenPickerOpensSnapshotView(t *testing.T) {
 
 	pressKey(ui, 'O')
 	settle(t, ui)
-	require.True(t, ui.pages.HasPage("snapshotpicker"), "the Open picker lists all roots and dates")
+	require.True(t, ui.pages.HasPage("snapshotpicker"), "the browser lists all roots and dates")
 
 	// Choose the /other snapshot — the long jump to another root.
 	listings, err := ui.coveringListings("/other", "")

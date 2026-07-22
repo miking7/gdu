@@ -259,3 +259,26 @@ func TestBrowserFillResolvesFolderSizes(t *testing.T) {
 	assert.Contains(t, st.table.GetCell(2, st.sizeCol).Text, "100", "the snapshot folder size resolves")
 	assert.Contains(t, st.table.GetCell(2, st.deltaCol).Text, "50", "Δ vs live (150−100) renders")
 }
+
+// TestBrowserApplyBaselineEntersDiffMode drives the O door end-to-end: engage ◇
+// on a covering snapshot, Enter, and the tree enters compare mode against it
+// while the live View is unchanged.
+func TestBrowserApplyBaselineEntersDiffMode(t *testing.T) {
+	dir := t.TempDir()
+	writeTinySnapshot(t, dir, "/root")
+	ui := newPickerUI(t, dir)
+
+	pressKey(ui, 'O')
+	settle(t, ui)
+	require.NotNil(t, ui.browser)
+
+	// Engage ◇ on the covering snapshot, then apply.
+	ui.browserMoveBase(ui.browser, +1)
+	require.GreaterOrEqual(t, ui.browser.baseCur, 0, "◇ engaged on a covering snapshot")
+	ui.applyBrowser(ui.browser)
+	settle(t, ui)
+
+	assert.False(t, ui.pages.HasPage("snapshotpicker"), "Enter closes the browser")
+	assert.True(t, ui.inDiffMode(), "applying the ◇ cursor sets the baseline")
+	assert.True(t, ui.viewIsLive(), "the live View is unchanged (only the baseline moved)")
+}

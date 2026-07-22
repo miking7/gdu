@@ -25,7 +25,9 @@ func (ui *UI) setBrowserHeaderCells(st *browserState) {
 	cfg := st.cfg
 	var headers []string
 	if cfg.rich() {
-		headers = []string{"When", "This folder", "Δ vs ●", "Root"}
+		// The Δ column reads against ●, so its header carries the same glyph the
+		// rows do — including the --no-unicode fallback.
+		headers = []string{"When", "This folder", "Δ vs " + ui.viewingGlyph(), "Root"}
 		st.whenCol, st.sizeCol, st.deltaCol, st.rootCol = 0, 1, 2, 3
 	} else {
 		headers = []string{"When", "Size", "Root"}

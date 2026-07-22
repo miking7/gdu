@@ -160,12 +160,14 @@ gdu can export/import scans as Apache Parquet and auto-archive them for trend an
   `--read-from-storage` — are hard read-only and signpost a *go live here* flow (instant switch to
   a covering in-memory live tree, else a confirmed transient spot-rescan). `[`/`]` walk the
   covering-snapshot timeline ([tui/timeline.go](tui/timeline.go); pinned to one root per walk,
-  live is the newest point, the just-saved snapshot *folds* into it); `O` opens any snapshot;
+  live is the newest point, the just-saved snapshot *folds* into it); `O`/`B` open the **unified
+  snapshot browser** ([tui/browser.go](tui/browser.go); `O` with the `●` Viewing cursor focused, `B`
+  with the `◇` Baseline cursor focused — one window, two doors);
   `Esc` is layered (modal → clear baseline → return view) and **never scans**. The two-slot header
   lives in [tui/header.go](tui/header.go): the roles carry **glyphs** — `●` Viewing (solid: the tree
   you stand in), `◇` Baseline (hollow: the reference you compare against), ASCII `*`/`o` under
   `--no-unicode` (same `useOldSizeBar` flag as the size bar). One shape means one role everywhere,
-  including the picker's active-baseline marker; the header stays a single-style band with no color
+  including the browser's two cursors; the header stays a single-style band with no color
   tags, because the shapes are what must survive `--no-color` and its copy is full of literal
   bracket key names the tag parser would otherwise eat. **A set Baseline always renders both
   lines**, live or not — a comparison must name both sides — and `dirLabelPrefix` carries the same
@@ -199,6 +201,20 @@ gdu can export/import scans as Apache Parquet and auto-archive them for trend an
   because the two renderings order rows differently. Compare deliberately **ignores `--collapse-path`**
   (deltas attach to real paths; a collapsed chain hides the levels a removal sits on), so its
   up-navigation steps the plain parent one real level at a time.
+- **Snapshot browser** (`tui/browser.go` + `browser_render.go`/`browser_input.go`/`browser_doors.go`):
+  one window behind every door, carrying two always-visible cursors — `●` Viewing and `◇` Baseline.
+  Tree-view `O`/`B` open it (`showSnapshotBrowser`; `●`/`◇` focused respectively), the launcher's `S`
+  opens it scoped to a row (no live row), and the `-f` multi-snapshot chooser is the same component
+  (`baselineOnly`, `escQuits`, no fill). `Tab` flips focus, `[ ]` step `●` and `{ }` step `◇`
+  regardless of focus (skipping each other's row — the two never collide), `Enter` applies whatever
+  changed (view then baseline, chained through `openSnapshotView`'s `then`), `Esc` discards. The live
+  tree is a pinned first row wired to the go-live flow; covering snapshots take both cursors, other
+  roots are `●`-view-only under a divider; the just-saved snapshot folds into the live row
+  (`snapshotFoldsIntoLive`). The "Δ vs ●" column fills asynchronously (`startBrowserFill`, reusing the
+  generation guard) and recomputes as `●` moves. **Cursor positions are `rows` indices, but selection
+  is by identity** (`rowForKey`) — the async fill must not be keyed off a positional guess, the seam
+  the stage-2 bug lived on. The old single-cursor picker is gone; `pickerSizeCell`/`pickerRootCell`/
+  `pickerHostCell`/`pickerDelta`/`dim` in `snapshotpicker.go` remain as shared cell helpers.
 - **Launcher**: the interactive front door
   ([tui/launcher.go](tui/launcher.go)), absorbing the standalone device page and left-arrow-at-top.
   Bare `gdu` **and** `gdu <path>` **and** interactive `gdu -d` open it; `App.launcherEnabled()`
@@ -212,8 +228,8 @@ gdu can export/import scans as Apache Parquet and auto-archive them for trend an
   before Mount point, shown only with mapped history (progressive disclosure). A styled header bar
   (`style.header` colors, honors `header.hidden`) tops it. Table row 0 is the header, so
   `st.rows[i]` renders at table row `i+1` — selection/activation carry that offset. `Enter` scans a
-  chosen root (saves), `s` opens the row's latest snapshot, `S` a picker (both reuse the snapshot picker
-  via `openSnapshotView`), `n` toggles the disk sort (usage-desc↔name-asc; the folder + pinned own
+  chosen root (saves), `s` opens the row's latest snapshot, `S` opens the unified snapshot browser
+  scoped to the row (no live row; both reuse `openSnapshotView`), `n` toggles the disk sort (usage-desc↔name-asc; the folder + pinned own
   disk + scan-another-folder stay fixed via `launcherDiskSpan`). Pre-selection: explicit path →
   folder row; bare/`-d` → the cwd's pinned disk. **Choosing the pinned own disk lands the view at the
   default dir, not the mount root** — `launcherRow.land`/`landPath()`, threaded as
@@ -260,16 +276,16 @@ gdu can export/import scans as Apache Parquet and auto-archive them for trend an
 - **Mount-accurate covering & picker polish**: the launcher's folder-row rule is now
   the general one — `report.RootCoversWithinMount(scanRoot, target, mount)` (root covers target ∧
   root at-or-below target's most-specific mount; `mount==""` degrades to plain path-covering) is
-  shared by `launcherRowMapsSnapshot`, the S picker (`coveringListings`), the `[`/`]` timeline, and
+  shared by `launcherRowMapsSnapshot`, the browser and timeline membership (`coveringListings`), and
   CLI `--baseline`/`--snapshot` covering hints. The mount comes from `device.ForPath(devices, path)`
   (the launcher's `deviceForPath` folded into `pkg/device`); the TUI captures `ui.devices`/`ui.getter`
   on the event loop and resolves off it via `mountForTarget` (getter fallback when the launcher was
   skipped — never mutating `ui.devices`). Go-live tests **actual tree membership** (`viewContains` →
   `descendToPath`), not path arithmetic, so a `/`-rooted live tree doesn't claim an SD folder.
   **Host is foreign-only** (`common.HostnameBestEffort`/`HostIsForeign`, exact match) across the
-  pickers, `report.PrintSnapshots`, and `parquet.FormatSnapshotList`. The Baseline picker gains a
+  browser, `report.PrintSnapshots`, and `parquet.FormatSnapshotList`. The browser carries a
   **Root column** and device-table styling (blue roots/amber sizes/dim ages via the shared
-  `deviceNameColor`/`deviceSizeColor` tags), and marks + pre-selects the active baseline
+  `deviceNameColor`/`deviceSizeColor` tags), and pre-positions the `◇` cursor on the active baseline
   (`ui.baselineKey`, a `parquet.SnapshotKey` set by `SetBaseline`). `--baseline-root` stays the
   deliberate cross-volume override.
 - **Schema** ([pkg/parquet/schema.go](pkg/parquet/schema.go)): 22 columns, one flat row per
