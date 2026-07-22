@@ -250,7 +250,7 @@ func (ui *UI) placeBrowserCursors(st *browserState) {
 	case cfg.baselineOnly:
 		st.focus = focusViewing
 	case cfg.hasBaseline:
-		if r := st.rowForKey(cfg.baselineKey); r >= 0 {
+		if r := st.baselineRowForKey(cfg.baselineKey); r >= 0 {
 			st.baseCur = r
 			st.initBaseCur = r
 		}
@@ -276,11 +276,31 @@ func (st *browserState) rowForKey(key parquet.SnapshotKey) int {
 	return -1
 }
 
-// baselineDefault is the snapshot immediately older than ● that ◇ may rest on,
-// or -1 when none exists (● is on the oldest covering snapshot, or there are no
-// covering snapshots for ◇ at all).
+// baselineRowForKey returns the rows index where ◇ may rest for this identity: a
+// covering-snapshot row that ● does not already hold, or -1. rowForKey also
+// matches an "other roots" row (● may view those, ◇ may not — a baseline must
+// cover the shown folder) and does not exclude ●'s own row (the two cursors
+// never share a row), so those cases resolve to -1 here.
+func (st *browserState) baselineRowForKey(key parquet.SnapshotKey) int {
+	r := st.rowForKey(key)
+	if r < 0 || st.rows[r].kind != browserSnapRow || r == st.viewCur {
+		return -1
+	}
+	return r
+}
+
+// baselineDefault is the covering snapshot ◇ engages when turned on with none
+// set: the one immediately older than ● — the one-keypress "compare vs previous"
+// default. When ● already sits on the oldest covering snapshot it falls back to
+// the next newer one (◇ resting newer than ● is allowed; the direction reads
+// from the two header timestamps). It is -1 only when no covering snapshot is
+// ◇-eligible at all — ● on the sole covering snapshot, or none exist — so every
+// baseCur < 0 guard stays live rather than dead.
 func (st *browserState) baselineDefault() int {
-	return st.nextSelectable(st.viewCur, +1, true)
+	if r := st.searchSelectable(st.viewCur, +1, true); r >= 0 {
+		return r // the snapshot just older than ●
+	}
+	return st.searchSelectable(st.viewCur, -1, true) // fall back to the next newer, else -1
 }
 
 // rowSelectable reports whether cursor forBase may rest on row i: ● on the live,
@@ -310,10 +330,21 @@ func (st *browserState) firstSelectable(forBase bool) int {
 // nextSelectable returns the next row in direction dir (from, exclusive) the
 // cursor may rest on, or from itself when there is none (a clamp).
 func (st *browserState) nextSelectable(from, dir int, forBase bool) int {
+	if i := st.searchSelectable(from, dir, forBase); i >= 0 {
+		return i
+	}
+	return from
+}
+
+// searchSelectable returns the next row in direction dir (from, exclusive) the
+// cursor may rest on, or -1 when there is none. Unlike nextSelectable it does
+// not clamp to from, so a caller producing a ◇ position can tell "nowhere valid"
+// (leave the cursor off) apart from "stayed put".
+func (st *browserState) searchSelectable(from, dir int, forBase bool) int {
 	for i := from + dir; i >= 0 && i < len(st.rows); i += dir {
 		if st.rowSelectable(i, forBase) {
 			return i
 		}
 	}
-	return from
+	return -1
 }

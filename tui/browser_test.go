@@ -96,8 +96,112 @@ func TestBrowserNoLiveRowStartsOnNewestSnapshot(t *testing.T) {
 	assert.Equal(t, -1, st.initViewCur, "with no current view, any Enter applies the ● choice")
 }
 
+// TestBrowserBDoorZeroCoveringLeavesBaselineOff: the B door over a folder whose
+// archive holds only non-covering snapshots finds nowhere for ◇, so it leaves
+// the baseline off and drives ● instead. Enter then changes nothing rather than
+// firing the clear path — B does not silently "do something".
+func TestBrowserBDoorZeroCoveringLeavesBaselineOff(t *testing.T) {
+	ui := browserTestUI(t)
+	cfg := treeBrowserCfg(focusBaseline, nil) // no covering snapshots
+	cfg.otherRoots = []report.SnapshotListing{{
+		SnapshotInfo: parquet.SnapshotInfo{ScanRoot: "/other", ScanTs: time.Now(), Host: "h"},
+	}}
+	st := ui.newBrowserStateForTest(cfg)
+
+	assert.Equal(t, -1, st.baseCur, "◇ finds no covering snapshot to rest on")
+	assert.Equal(t, focusViewing, st.focus, "focus falls back to ● when ◇ has nowhere to go")
+	assert.Equal(t, st.initViewCur, st.viewCur, "● is unmoved, so Enter is a no-op")
+	assert.Equal(t, st.initBaseCur, st.baseCur, "◇ is unmoved (both -1), so Enter is a no-op")
+}
+
+// TestBrowserViewingOnlySnapshotTabKeepsBaselineOff: with ● opened on the sole
+// covering snapshot, Tab finds no other covering snapshot for ◇ and refuses to
+// engage — no snapshot-vs-itself self-baseline, no committed all-zero diff.
+func TestBrowserViewingOnlySnapshotTabKeepsBaselineOff(t *testing.T) {
+	ui := browserTestUI(t)
+	cov := coveringListingsForTest(1)
+	cfg := treeBrowserCfg(focusViewing, cov)
+	cfg.curViewLive = false
+	cfg.curViewKey = cov[0].Key() // ● opens on the snapshot, not the live row
+	st := ui.newBrowserStateForTest(cfg)
+	require.Equal(t, cov[0].Key(), st.rows[st.viewCur].listing.Key(), "● opens on the only snapshot")
+
+	ui.browserFlipFocus(st)
+	assert.Equal(t, -1, st.baseCur, "Tab does not pre-arm ◇ on ●'s own row")
+	assert.Equal(t, focusViewing, st.focus, "focus stays on ● when ◇ has nowhere to go")
+}
+
+// TestBrowserBraceOnOnlySnapshotKeepsBaselineOff: pressing { with ● on the sole
+// covering snapshot has no other snapshot to compare against, so ◇ stays off
+// rather than pinning a self-baseline.
+func TestBrowserBraceOnOnlySnapshotKeepsBaselineOff(t *testing.T) {
+	ui := browserTestUI(t)
+	cov := coveringListingsForTest(1)
+	cfg := treeBrowserCfg(focusViewing, cov)
+	cfg.curViewLive = false
+	cfg.curViewKey = cov[0].Key()
+	st := ui.newBrowserStateForTest(cfg)
+
+	ui.browserMoveBase(st, +1) // {
+	assert.Equal(t, -1, st.baseCur, "{ finds no other covering snapshot; ◇ stays off")
+}
+
+// TestBrowserBaselineDefaultFallsBackToNewer: with ● on the oldest covering
+// snapshot, engaging ◇ falls back to the next *newer* snapshot (◇ resting newer
+// than ● is allowed) rather than giving up and stranding the cursor.
+func TestBrowserBaselineDefaultFallsBackToNewer(t *testing.T) {
+	ui := browserTestUI(t)
+	cov := coveringListingsForTest(3) // rows: live(0), newest(1), mid(2), oldest(3)
+	cfg := treeBrowserCfg(focusViewing, cov)
+	cfg.curViewLive = false
+	cfg.curViewKey = cov[2].Key() // the oldest covering snapshot
+	st := ui.newBrowserStateForTest(cfg)
+	require.Equal(t, 3, st.viewCur, "● opens on the oldest snapshot (row 3)")
+
+	ui.browserFlipFocus(st) // Tab engages ◇
+	require.GreaterOrEqual(t, st.baseCur, 0, "◇ engages despite ● being oldest")
+	assert.Equal(t, 2, st.baseCur, "◇ falls back to the next newer snapshot")
+	assert.Equal(t, focusBaseline, st.focus)
+}
+
+// TestBrowserAppliedBaselineIgnoresOtherRoot: an applied baseline whose snapshot
+// is now an "other roots" row (a root that no longer covers the shown folder) is
+// not seated on ◇ — ◇ may only rest on a covering snapshot.
+func TestBrowserAppliedBaselineIgnoresOtherRoot(t *testing.T) {
+	ui := browserTestUI(t)
+	cov := coveringListingsForTest(1)
+	cfg := treeBrowserCfg(focusViewing, cov)
+	other := report.SnapshotListing{
+		SnapshotInfo: parquet.SnapshotInfo{ScanRoot: "/other", ScanTs: time.Now(), Host: "h"},
+	}
+	cfg.otherRoots = []report.SnapshotListing{other}
+	cfg.hasBaseline = true
+	cfg.baselineKey = other.Key() // the applied baseline is a non-covering root
+	st := ui.newBrowserStateForTest(cfg)
+
+	assert.Equal(t, -1, st.baseCur, "◇ is not seated on a view-only other-roots row")
+	assert.Equal(t, -1, st.initBaseCur)
+}
+
+// TestBrowserAppliedBaselineEqualsViewLeavesBaselineOff: opening a door while
+// viewing the very snapshot that is the applied baseline (● and ◇ would collide)
+// seats ● on the row and leaves ◇ off, rather than stacking both on one row.
+func TestBrowserAppliedBaselineEqualsViewLeavesBaselineOff(t *testing.T) {
+	ui := browserTestUI(t)
+	cov := coveringListingsForTest(1)
+	cfg := treeBrowserCfg(focusViewing, cov)
+	cfg.curViewLive = false
+	cfg.curViewKey = cov[0].Key()
+	cfg.hasBaseline = true
+	cfg.baselineKey = cov[0].Key() // viewing the baseline snapshot itself
+	st := ui.newBrowserStateForTest(cfg)
+
+	require.Equal(t, cov[0].Key(), st.rows[st.viewCur].listing.Key(), "● holds the row")
+	assert.Equal(t, -1, st.baseCur, "◇ does not share ●'s row")
+}
+
 // TestBrowserBDoorPreArmsPreviousSnapshot: B pre-arms ◇ on the snapshot just
-// older than ● (the J2 compare-vs-previous default) and focuses it.
+// older than ● (the one-keypress compare-vs-previous default) and focuses it.
 func TestBrowserBDoorPreArmsPreviousSnapshot(t *testing.T) {
 	ui := browserTestUI(t)
 	st := ui.newBrowserStateForTest(treeBrowserCfg(focusBaseline, coveringListingsForTest(3)))
