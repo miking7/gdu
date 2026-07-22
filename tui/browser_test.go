@@ -521,6 +521,43 @@ func TestBrowserFilledRowRepaintsAllWhenViewRowResolves(t *testing.T) {
 	assert.Contains(t, st.table.GetCell(3, st.deltaCol).Text, "10", "Δ = ●(100) − cov[1](90) now renders")
 }
 
+// TestBrowserApplyOtherRootDropsBaseline: applying a view on an other-roots row
+// while a baseline is set clears the baseline (a baseline must cover the viewed
+// folder) and never applies it — no inert all-uncovered diff.
+func TestBrowserApplyOtherRootDropsBaseline(t *testing.T) {
+	ui := browserTestUI(t)
+	cov := coveringListingsForTest(1)
+	cfg := treeBrowserCfg(focusViewing, cov)
+	cfg.fillTarget = "/root"
+	other := report.SnapshotListing{
+		SnapshotInfo: parquet.SnapshotInfo{ScanRoot: "/other", ScanTs: time.Now(), Host: "h"},
+	}
+	cfg.otherRoots = []report.SnapshotListing{other}
+	cfg.hasBaseline = true
+	cfg.baselineKey = cov[0].Key()
+	var applied, cleared int
+	var openedRoot string
+	cfg.applyBaseline = func(_ *report.SnapshotListing) { applied++ }
+	cfg.clearBaseline = func() { cleared++ }
+	cfg.openView = func(l *report.SnapshotListing, then func()) {
+		openedRoot = l.ScanRoot
+		if then != nil {
+			then() // the browser runs this after the view loads; drive it synchronously
+		}
+	}
+	st := ui.newBrowserStateForTest(cfg)
+	require.GreaterOrEqual(t, st.baseCur, 0, "the applied baseline seated on ◇")
+
+	// Move ● onto the other-roots row (rows: live0, snap1, section2, other3).
+	st.viewCur = 3
+	require.Equal(t, browserOtherRow, st.rows[st.viewCur].kind)
+
+	ui.applyBrowser(st)
+	assert.Equal(t, "/other", openedRoot, "the other-root snapshot opens as the view")
+	assert.Equal(t, 0, applied, "the baseline is never applied against a non-covering view")
+	assert.Equal(t, 1, cleared, "the incompatible baseline is cleared")
+}
+
 // TestBrowserFillResolvesFolderSizes drives the O door end-to-end through the
 // event loop: the covering snapshot's folder size fills in and its Δ vs the
 // live ● is computed.

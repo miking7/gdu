@@ -276,6 +276,10 @@ func (ui *UI) browserDiscard(st *browserState) {
 	ui.app.SetFocus(refocus)
 }
 
+// baselineUncoveredFlash explains an auto-cleared baseline: the ● view moved to
+// a tree the baseline does not cover, so the comparison was dropped.
+const baselineUncoveredFlash = " baseline no longer covers this folder — cleared"
+
 // applyBrowser is Enter: commit whatever the cursors changed — the View (●), the
 // Baseline (◇), or both. A changed View lands first (its tree loads off the
 // event loop); the pending baseline is then applied on top via the continuation,
@@ -284,6 +288,7 @@ func (ui *UI) applyBrowser(st *browserState) {
 	cfg := st.cfg
 	viewChanged := st.viewCur != st.initViewCur
 	baseChanged := st.baseCur != st.initBaseCur
+	viewRow := st.rows[st.viewCur]
 
 	var pendingBase *report.SnapshotListing
 	if st.baseCur >= 0 && st.rows[st.baseCur].kind == browserSnapRow {
@@ -291,7 +296,25 @@ func (ui *UI) applyBrowser(st *browserState) {
 		pendingBase = &l
 	}
 	applyBase := func() {
-		if !baseChanged || cfg.baselineOnly {
+		if cfg.baselineOnly {
+			return
+		}
+		// An other-roots ● view covers a different tree, so no baseline can apply
+		// to it — a baseline must cover the folder being viewed. Clear any applied
+		// baseline; if the user had one set or left pending, flash why it did not
+		// take, rather than render an all-uncovered diff.
+		if viewRow.kind == browserOtherRow {
+			if pendingBase != nil || st.initBaseCur >= 0 {
+				if cfg.clearBaseline != nil {
+					cfg.clearBaseline()
+				}
+			}
+			if pendingBase != nil {
+				ui.flashFooter(baselineUncoveredFlash)
+			}
+			return
+		}
+		if !baseChanged {
 			return
 		}
 		if pendingBase == nil {
@@ -305,7 +328,6 @@ func (ui *UI) applyBrowser(st *browserState) {
 		}
 	}
 
-	viewRow := st.rows[st.viewCur]
 	refocus := tview.Primitive(ui.table)
 	if cfg.refocus != nil {
 		refocus = cfg.refocus
