@@ -284,10 +284,10 @@ func TestTabAndDTeachFlashWithoutCompare(t *testing.T) {
 	require.False(t, ui.inDiffMode())
 
 	ui.keyPressed(tcell.NewEventKey(tcell.KeyTab, 0, 0))
-	assert.Contains(t, ui.header.GetText(false), "no baseline set — S to compare")
+	assert.Contains(t, ui.header.GetText(false), "no baseline set — B to compare")
 
 	pressRune(ui, 'D')
-	assert.Contains(t, ui.header.GetText(false), "no baseline set — S to compare")
+	assert.Contains(t, ui.header.GetText(false), "no baseline set — B to compare")
 
 	// With a baseline set but Δ toggled off, D points at Tab instead.
 	ui.SetBaseline(analyze.BuildBaseline(diffBaselineTop(), "top", 0), snapAt(diffBaselineTime()))

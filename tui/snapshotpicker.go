@@ -6,14 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/dundee/gdu/v5/build"
 	"github.com/dundee/gdu/v5/internal/common"
 	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
@@ -59,95 +57,6 @@ type pickerConfig struct {
 	// sets it to the launcher table so Esc returns to the launcher, not the
 	// empty grid behind it.
 	refocus tview.Primitive
-}
-
-// showSnapshotPicker opens the Baseline picker (key S): the snapshots in the
-// archive that cover the current folder, newest first. The list appears at
-// once; each row's folder size then and its change since now fill in behind it
-// as the archive is read, so a large (e.g. compacted whole-disk) archive never
-// keeps the picker waiting. Enter sets the highlighted snapshot as the diff
-// baseline.
-func (ui *UI) showSnapshotPicker() {
-	if ui.currentDir == nil {
-		return
-	}
-	ui.pages.RemovePage("info") // never stack the picker over an open info overlay
-	if ui.snapshotsDir == "" {
-		ui.showErr("No snapshot archive", fmt.Errorf("no snapshots directory is configured"))
-		return
-	}
-
-	target := ui.currentDirPath
-	nowSize := ui.currentDir.GetUsage()
-	devices, getter := ui.devices, ui.getter // captured on the loop for off-loop mount resolution
-
-	// Listing the archive reads each file's footer; brief, but done off the event
-	// loop behind a loading page so the UI never stalls.
-	ui.showLoadingPage("Reading snapshots...", " Snapshots ")
-	ui.goPickerWork(func() {
-		covering, err := ui.coveringForTarget(target, devices, getter)
-		ui.app.QueueUpdateDraw(func() {
-			ui.pages.RemovePage(loadingPage)
-			switch {
-			case err != nil:
-				ui.showErr("Error reading snapshot archive", err)
-			case len(covering) == 0:
-				ui.showErr("No snapshots", fmt.Errorf("no archived snapshot covers %s", target))
-			default:
-				shortTarget := strings.TrimPrefix(target, build.RootPathPrefix)
-				ui.buildPicker(&pickerConfig{
-					// A long path would push "Baseline" off the centered title.
-					title: fmt.Sprintf(
-						" Baseline for %s (%d) — Enter to set, Esc to cancel ",
-						path.ShortenPath(shortTarget, 48), len(covering)),
-					listings: covering,
-					hint: func(l *report.SnapshotListing) string {
-						return fmt.Sprintf(" gdu --baseline %s %s",
-							parquet.FormatSnapshotTime(&l.SnapshotInfo), shortTarget)
-					},
-					onSelect:  func(l *report.SnapshotListing) { ui.setBaselineFromListing(l) },
-					fillSizes: true,
-					target:    target,
-					nowSize:   nowSize,
-				})
-			}
-		})
-	})
-}
-
-// showOpenPicker opens the Open/View picker (key O): every snapshot in the
-// archive, all roots and dates, newest first — the long jump. Enter opens the
-// highlighted snapshot as the View.
-func (ui *UI) showOpenPicker() {
-	ui.pages.RemovePage("info")
-	if ui.snapshotsDir == "" {
-		ui.showErr("No snapshot archive", fmt.Errorf("no snapshots directory is configured"))
-		return
-	}
-
-	ui.showLoadingPage("Reading snapshots...", " Snapshots ")
-	ui.goPickerWork(func() {
-		listings, err := report.ListSnapshotsInDir(ui.snapshotsDir)
-		ui.app.QueueUpdateDraw(func() {
-			ui.pages.RemovePage(loadingPage)
-			switch {
-			case err != nil:
-				ui.showErr("Error reading snapshot archive", err)
-			case len(listings) == 0:
-				ui.showErr("No snapshots", fmt.Errorf("the snapshot archive %s holds no snapshots", ui.snapshotsDir))
-			default:
-				ui.buildPicker(&pickerConfig{
-					title:    fmt.Sprintf(" Open a snapshot (%d) — Enter to open, Esc to cancel ", len(listings)),
-					listings: listings,
-					hint: func(l *report.SnapshotListing) string {
-						return fmt.Sprintf(" gdu --snapshot %s %s",
-							parquet.FormatSnapshotTime(&l.SnapshotInfo), l.ScanRoot)
-					},
-					onSelect: func(l *report.SnapshotListing) { ui.openSnapshotFromListing(l) },
-				})
-			}
-		})
-	})
 }
 
 // showStartupSnapshotPicker presents the snapshots held in a multi-snapshot
@@ -267,11 +176,12 @@ func (ui *UI) closeSnapshotPicker() {
 		ui.snapshotSizeCancel()
 		ui.snapshotSizeCancel = nil
 	}
+	ui.browser = nil
 	ui.pages.RemovePage("snapshotpicker")
 }
 
 // coveringListings lists the archived snapshots that mount-accurately cover
-// target, newest first — the S picker's and timeline's membership rule. A
+// target, newest first — the browser's and timeline's membership rule. A
 // "/" snapshot no longer pollutes the list for a folder on another volume. mount
 // is target's most-specific mount point ("" degrades to plain path-covering). It
 // performs file I/O and must run off the tview event loop.
@@ -557,21 +467,23 @@ func (ui *UI) setBaselineFromListing(l *report.SnapshotListing) {
 	})
 }
 
-// openSnapshotFromListing loads the chosen archived snapshot as the View (the
-// O picker's Enter): read off the event loop behind the loading page, then
-// shown with the current folder preserved when the snapshot covers it.
+// openSnapshotFromListing loads the chosen archived snapshot as the View: read
+// off the event loop behind the loading page, then shown with the current folder
+// preserved when the snapshot covers it.
 func (ui *UI) openSnapshotFromListing(l *report.SnapshotListing) {
-	ui.openSnapshotView(l, ui.currentDirPath, ui.selectedItemName(), false)
+	ui.openSnapshotView(l, ui.currentDirPath, ui.selectedItemName(), false, nil)
 }
 
 // openSnapshotView loads listing as the View, off the event loop behind the
 // loading page, preserving wantPath/wantSel (nearest ancestor when the snapshot
 // doesn't reach wantPath). When setReturn is true and the session has no return
 // view yet, the loaded snapshot becomes it — so a launcher s/S can be the View
-// the session launched into (the set-return-view-if-unset rule). It
-// is shared by the O picker and the launcher; capture wantPath/wantSel at the
-// call site (on the event loop) before it runs.
-func (ui *UI) openSnapshotView(l *report.SnapshotListing, wantPath, wantSel string, setReturn bool) {
+// the session launched into (the set-return-view-if-unset rule). then, when
+// non-nil, runs on the event loop right after the view is applied — the browser
+// uses it to set a pending baseline on top of the freshly loaded View. It is
+// shared by the browser and the launcher; capture wantPath/wantSel at the call
+// site (on the event loop) before it runs.
+func (ui *UI) openSnapshotView(l *report.SnapshotListing, wantPath, wantSel string, setReturn bool, then func()) {
 	listing := *l // copy; the goroutine outlives the listings slice
 	ui.resetTimeline()
 	gen := ui.stepGen
@@ -595,6 +507,9 @@ func (ui *UI) openSnapshotView(l *report.SnapshotListing, wantPath, wantSel stri
 				ui.returnView = v
 			}
 			ui.applyView(v, wantPath, wantSel)
+			if then != nil {
+				then()
+			}
 		})
 	})
 }

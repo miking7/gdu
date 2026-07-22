@@ -29,9 +29,9 @@ var (
 History — view & compare (snapshot views are read-only; d/e offer to go live):
                [::b][     [white:black:-]Step to an older snapshot of this folder
                [::b]]     [white:black:-]Step to a newer snapshot; at the newest, back to live
-               [::b]S     [white:black:-]Compare: pick a baseline snapshot to measure growth against
+               [::b]O     [white:black:-]Open the snapshot browser (choose the view; ● focused)
+               [::b]B     [white:black:-]Open the snapshot browser to pick a baseline (◇ focused)
              [::b]Tab     [white:black:-]With a baseline set, toggle the growth (Δ) column on/off
-               [::b]O     [white:black:-]Open any archived snapshot as the view
              [::b]Esc     [white:black:-]Clear the baseline, else return where you started
 
 Act on items:
@@ -54,7 +54,7 @@ Sort & display:
                [::b]M     [white:black:-]Sort by mtime (asc/desc)
                [::b]D     [white:black:-]Sort by growth since the baseline (Δ; compare view only)
                [::b]a     [white:black:-]Toggle between showing disk usage and apparent size
-               [::b]B     [white:black:-]Toggle bar alignment to biggest file or directory
+               [::b]%     [white:black:-]Toggle bar alignment to biggest file or directory
                [::b]c     [white:black:-]Show/hide file count
                [::b]m     [white:black:-]Show/hide latest mtime`
 )

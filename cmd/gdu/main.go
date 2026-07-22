@@ -38,9 +38,10 @@ Gdu is intended primarily for SSD disks where it can fully utilize parallel proc
 However HDDs work as well, but the performance gain is not so huge.
 
 This fork records history: every completed interactive scan is archived as a Parquet
-snapshot (see --save-snapshots). In the TUI, S compares the view against a snapshot
-(growth diff), [ and ] step the view itself through this folder's snapshots, and O opens
-any archived snapshot; snapshot views are read-only, with a guided way back to the live disk.
+snapshot (see --save-snapshots). In the TUI, O and B open the snapshot browser (O to
+choose which snapshot the view shows, B to pick a baseline to measure growth against),
+and [ and ] step the view itself through this folder's snapshots; snapshot views are
+read-only, with a guided way back to the live disk.
 `,
 	Args:         cobra.MaximumNArgs(1),
 	SilenceUsage: true,

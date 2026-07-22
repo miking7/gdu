@@ -252,10 +252,20 @@ func (ui *UI) showGoLiveSignpost(text string) {
 
 // goLiveHere reaches the live disk from a snapshot View: switch to the
 // in-memory live tree when it covers the current folder (instant, cursor
-// kept); otherwise offer a scoped spot-rescan of just this folder. While a
-// scan runs there is no live tree to stand on — the in-memory one is being
-// built or grafted — so the flow waits (no concurrent scans).
+// kept); otherwise offer a scoped spot-rescan of just this folder.
 func (ui *UI) goLiveHere() {
+	ui.goLiveHereThen(nil)
+}
+
+// goLiveHereThen is goLiveHere with a continuation run on the event loop right
+// after the instant switch — the browser uses it to set a pending baseline on
+// the freshly live tree. The spot-rescan branch does not run it: applying a
+// baseline against a tree that is still being scanned would render a diff of a
+// partial tree, so a go-live that must rescan drops the pending baseline (the
+// user can set one once the scan completes). While a scan runs there is no live
+// tree to stand on — the in-memory one is being built or grafted — so the flow
+// waits (no concurrent scans).
+func (ui *UI) goLiveHereThen(then func()) {
 	folder := ui.currentDirPath
 	sel := ui.selectedItemName()
 
@@ -268,6 +278,9 @@ func (ui *UI) goLiveHere() {
 		ui.resetTimeline()
 		ui.applyView(ui.liveView, folder, sel)
 		ui.flashFooter(liveSwitchFooter(ui.liveView.scannedAt))
+		if then != nil {
+			then()
+		}
 		return
 	}
 

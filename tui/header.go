@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dundee/gdu/v5/pkg/parquet"
 	"github.com/dundee/gdu/v5/pkg/path"
 	"github.com/dundee/gdu/v5/report"
 )
@@ -15,7 +16,7 @@ const (
 	// covering history yet).
 	upstreamHint = " gdu ~ Use arrow keys to navigate, press ? for help "
 	// historyHint replaces it once covering history exists for the shown root.
-	historyHint = " gdu ~ [ back in time · S compare · ? help "
+	historyHint = " gdu ~ [ back in time · B compare · O snapshots · ? help "
 
 	// headerTimeLayout renders snapshot timestamps in header/footer copy
 	// ("2026-06-19 15:30"); headerDateLayout is the compact-prefix form and
@@ -280,11 +281,17 @@ func (ui *UI) refreshCoveringHint(target string) {
 // the event loop.
 func (ui *UI) hasWalkableHistory(covering []report.SnapshotListing) bool {
 	for i := range covering {
-		folded := ui.liveSavedValid && !ui.liveDiverged.Load() &&
-			covering[i].Key() == ui.liveSavedKey
-		if !folded {
+		if !ui.snapshotFoldsIntoLive(covering[i].Key()) {
 			return true
 		}
 	}
 	return false
+}
+
+// snapshotFoldsIntoLive reports whether the snapshot with this identity is the
+// one just saved from the still-unchanged live tree — the present, not history.
+// The timeline drops it (the live position represents it) and the browser folds
+// it into the live row for the same reason. Must run on the event loop.
+func (ui *UI) snapshotFoldsIntoLive(key parquet.SnapshotKey) bool {
+	return ui.liveSavedValid && !ui.liveDiverged.Load() && key == ui.liveSavedKey
 }

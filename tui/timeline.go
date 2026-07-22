@@ -21,7 +21,7 @@ import (
 
 // Deliberate user-facing copy — reword with care.
 const (
-	noCoveringNotice   = "no snapshots of this folder — S to see the archive"
+	noCoveringNotice   = "no snapshots of this folder — O to see the archive"
 	oldestNotice       = "already at the oldest snapshot"
 	scanCompleteNotice = "scan complete — ] to view"
 

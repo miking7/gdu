@@ -1445,7 +1445,8 @@ func TestShowRelativeBar(t *testing.T) {
 	assert.Equal(t, "test_dir", ui.currentDir.GetName())
 	assert.False(t, ui.ShowRelativeSize)
 
-	ui.keyPressed(tcell.NewEventKey(tcell.KeyRune, 'B', 0))
+	// Bar alignment moved from B (now the browser's baseline door) to %.
+	ui.keyPressed(tcell.NewEventKey(tcell.KeyRune, '%', 0))
 
 	assert.True(t, ui.ShowRelativeSize)
 }

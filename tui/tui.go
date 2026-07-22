@@ -113,7 +113,7 @@ type UI struct {
 	baseline   *analyze.Baseline
 	baselineTs time.Time
 	// baselineKey is the active baseline snapshot's full identity, so the
-	// S picker can mark and pre-select it on reopen — a timestamp alone can't
+	// browser can mark and pre-select it on reopen — a timestamp alone can't
 	// tell same-instant snapshots of different roots apart. Zero when no
 	// snapshot-derived baseline is set.
 	baselineKey parquet.SnapshotKey
@@ -129,7 +129,7 @@ type UI struct {
 	// (biggest growth first).
 	diffSortBy    string
 	diffSortOrder string
-	snapshotsDir  string // archive dir the S/O pickers list snapshots from
+	snapshotsDir  string // archive dir the snapshot browser lists snapshots from
 	// View/Baseline state: every screen shows a View, optionally against a
 	// Baseline. currentView is what's shown, liveView the in-memory live tree
 	// (kept while snapshot Views are shown), returnView where Esc lands — the
@@ -205,6 +205,9 @@ type UI struct {
 	// rather than to the standalone device list.
 	launcher      *launcherState
 	usingLauncher bool
+	// browser holds the current unified snapshot browser (nil when it isn't
+	// shown; the pointer also guards its async size fill, like the launcher's).
+	browser *browserState
 }
 
 type deleteQueueItem struct {
@@ -441,8 +444,8 @@ func (ui *UI) SetChangeCwdFn(fn func(string) error) {
 	ui.changeCwdFn = fn
 }
 
-// SetSnapshotsDir sets the snapshot archive directory the S picker lists baselines
-// from (growth-diff browsing).
+// SetSnapshotsDir sets the snapshot archive directory the snapshot browser
+// lists snapshots from (growth-diff browsing).
 func (ui *UI) SetSnapshotsDir(dir string) {
 	ui.snapshotsDir = dir
 }

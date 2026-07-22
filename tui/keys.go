@@ -279,7 +279,7 @@ func (ui *UI) handlePreviewKeys(key *tcell.EventKey) *tcell.EventKey {
 	case 's', 'C', 'n', 'M':
 		ui.handleSorting(key)
 		return nil
-	case 'a', 'B', 'c', 'm':
+	case 'a', '%', 'c', 'm':
 		ui.handleToggles(key)
 		return nil
 	}
@@ -400,7 +400,7 @@ func (ui *UI) handleMainActions(key *tcell.EventKey) *tcell.EventKey {
 		ui.openItem()
 	case 'i':
 		ui.showInfo()
-	case 'a', 'B', 'c', 'm':
+	case 'a', '%', 'c', 'm':
 		ui.handleToggles(key)
 	case 'r':
 		if ui.currentDir != nil {
@@ -424,11 +424,11 @@ func (ui *UI) handleMainActions(key *tcell.EventKey) *tcell.EventKey {
 		return nil
 	case 'I':
 		ui.ignoreItem()
-	case 'S':
-		ui.showSnapshotPicker()
-		return nil
 	case 'O':
-		ui.showOpenPicker()
+		ui.showSnapshotBrowser(focusViewing)
+		return nil
+	case 'B':
+		ui.showSnapshotBrowser(focusBaseline)
 		return nil
 	case '[', ']':
 		ui.handleStepKey(key.Rune())
@@ -447,9 +447,10 @@ func (ui *UI) handleMainActions(key *tcell.EventKey) *tcell.EventKey {
 }
 
 // Teach-flash copy for the compare gestures when there is nothing to compare.
-// It names today's key for choosing a baseline (S); this is transitional copy,
-// expected to be rewritten when the baseline-stepping keys are added.
-const noBaselineNotice = "no baseline set — S to compare"
+// It names the key that opens the browser on its baseline door (B); this is
+// transitional copy, expected to be rewritten when the baseline-stepping keys
+// are added.
+const noBaselineNotice = "no baseline set — B to compare"
 
 // handleTabToggle flips the compare view's Δ rendering on and off — the tree
 // screen's counterpart pair. With no baseline set there is nothing to compare,
@@ -530,7 +531,7 @@ func (ui *UI) handleToggles(key *tcell.EventKey) {
 	switch key.Rune() {
 	case 'a':
 		ui.ShowApparentSize = !ui.ShowApparentSize
-	case 'B':
+	case '%':
 		ui.ShowRelativeSize = !ui.ShowRelativeSize
 	case 'c':
 		ui.showItemCount = !ui.showItemCount

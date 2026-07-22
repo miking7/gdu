@@ -607,7 +607,7 @@ func (ui *UI) launcherOpenLatest() {
 	listing := r.covering[0]
 	wantPath := r.landPath() // the pinned own-disk row lands at the default dir
 	ui.closeLauncher()
-	ui.openSnapshotView(&listing, wantPath, "", true)
+	ui.openSnapshotView(&listing, wantPath, "", true, nil)
 }
 
 // launcherPickSnapshot opens a picker of the selected row's mapped snapshots
@@ -640,7 +640,7 @@ func (ui *UI) launcherPickSnapshot() {
 		onSelect: func(l *report.SnapshotListing) {
 			listing := *l
 			ui.closeLauncher()
-			ui.openSnapshotView(&listing, wantPath, "", true)
+			ui.openSnapshotView(&listing, wantPath, "", true, nil)
 		},
 		refocus: st.table,
 	})
