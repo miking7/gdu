@@ -102,7 +102,6 @@ type browserState struct {
 	cfg   *browserConfig
 	table *tview.Table
 	head  *tview.TextView
-	keys  *tview.TextView // the static key-hint line
 	hint  *tview.TextView // the dynamic scriptable-equivalent line
 
 	rows    []browserRow
@@ -153,7 +152,6 @@ func (ui *UI) showBrowser(cfg *browserConfig) {
 	keys := tview.NewTextView() // no dynamic colors: the hint prints literal [ ] { }
 	keys.SetBackgroundColor(tcell.ColorDefault)
 	keys.SetText(cfg.keyHintText())
-	st.keys = keys
 
 	hint := tview.NewTextView().SetDynamicColors(true)
 	hint.SetBackgroundColor(tcell.ColorDefault)

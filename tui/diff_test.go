@@ -224,8 +224,8 @@ func pressRune(ui *UI, r rune) {
 }
 
 // TestCompareViewHasNormalAnatomy confirms a present row keeps the plain table's
-// size column and usage bar and gains the appended Δ column (fixes F3, which
-// dropped columns and rescaled the bar to |Δ|).
+// size column and usage bar and gains the appended Δ column — guarding against a
+// compare view that drops those columns and rescales the bar to |Δ|.
 func TestCompareViewHasNormalAnatomy(t *testing.T) {
 	ui := newDiffUI(t)
 	ui.SetBaseline(analyze.BuildBaseline(diffBaselineTop(), "top", 0), snapAt(diffBaselineTime()))
@@ -592,7 +592,7 @@ func visibleEndOffset(t *testing.T, ui *UI, rowKey, needle string) int {
 
 // TestCompareDeltaMagnitudeRightAligned asserts the signed Δ magnitudes are
 // right-aligned so their size units line up down the column, matching the size
-// column and the §4.2 mock — the drift this fixes rendered them left-aligned.
+// column above them — the drift this guards against rendered them left-aligned.
 func TestCompareDeltaMagnitudeRightAligned(t *testing.T) {
 	ui := newDiffUI(t)
 	ui.currentDir = magnitudeRightCurrent()

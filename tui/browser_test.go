@@ -49,7 +49,6 @@ func (ui *UI) newBrowserStateForTest(cfg *browserConfig) *browserState {
 	ui.placeBrowserCursors(st)
 	st.table = tview.NewTable().SetSelectable(true, false)
 	st.head = tview.NewTextView()
-	st.keys = tview.NewTextView()
 	st.hint = tview.NewTextView()
 	ui.setBrowserHeaderCells(st)
 	ui.renderBrowserBody(st)
