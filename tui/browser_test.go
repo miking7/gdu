@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/dundee/gdu/v5/internal/common"
 	"github.com/dundee/gdu/v5/internal/testapp"
 	"github.com/dundee/gdu/v5/pkg/parquet"
 	"github.com/dundee/gdu/v5/report"
@@ -76,6 +77,23 @@ func TestBrowserODoorStartsOnLiveNoBaseline(t *testing.T) {
 	assert.Equal(t, browserLiveRow, st.rows[st.viewCur].kind)
 	assert.Equal(t, -1, st.baseCur, "the view door does not pre-arm a baseline")
 	assert.Equal(t, focusViewing, st.focus)
+}
+
+// TestBrowserNoLiveRowStartsOnNewestSnapshot: the launcher / -f configs have no
+// live row, so ● starts on the newest snapshot (row 0), not skipping it.
+func TestBrowserNoLiveRowStartsOnNewestSnapshot(t *testing.T) {
+	ui := browserTestUI(t)
+	cfg := &browserConfig{
+		scopeLabel:   "/root",
+		covering:     coveringListingsForTest(3),
+		initialFocus: focusViewing,
+		// no live row, curViewLive false (nothing is being viewed yet)
+	}
+	st := ui.newBrowserStateForTest(cfg)
+
+	assert.Equal(t, 0, st.viewCur, "● starts on the newest snapshot, not the second row")
+	assert.Equal(t, browserSnapRow, st.rows[0].kind)
+	assert.Equal(t, -1, st.initViewCur, "with no current view, any Enter applies the ● choice")
 }
 
 // TestBrowserBDoorPreArmsPreviousSnapshot: B pre-arms ◇ on the snapshot just
@@ -154,4 +172,90 @@ func TestBrowserViewMayVisitOtherRoots(t *testing.T) {
 	ui.browserMoveView(st, +1)
 	ui.browserMoveView(st, +1)
 	assert.Equal(t, browserOtherRow, st.rows[st.viewCur].kind, "● reaches the other-roots row, skipping the divider")
+}
+
+// browserHeaders reads the browser table's column-header row.
+func browserHeaders(table *tview.Table) []string {
+	var hs []string
+	for c := 0; c < table.GetColumnCount(); c++ {
+		if cell := table.GetCell(0, c); cell != nil {
+			hs = append(hs, cell.Text)
+		}
+	}
+	return hs
+}
+
+// TestBrowserRootAndHostColumns: a foreign-host snapshot reveals the Host column
+// and the Root column shows the snapshot's scan root.
+func TestBrowserRootAndHostColumns(t *testing.T) {
+	ui := browserTestUI(t)
+	cov := coveringListingsForTest(1) // host "h", foreign to any real machine
+	st := ui.newBrowserStateForTest(treeBrowserCfg(focusViewing, cov))
+
+	headers := browserHeaders(st.table)
+	assert.Contains(t, headers, "Root", "the browser has a Root column")
+	assert.Contains(t, headers, "Host", "a foreign snapshot reveals the Host column")
+	// The snapshot is table row 2 (row 1 is the live row).
+	assert.Contains(t, st.table.GetCell(2, st.rootCol).Text, "/root")
+}
+
+// TestBrowserHidesLocalHost: a same-machine snapshot leaves the Host column off.
+func TestBrowserHidesLocalHost(t *testing.T) {
+	ui := browserTestUI(t)
+	cov := coveringListingsForTest(1)
+	cov[0].Host = common.HostnameBestEffort()
+	st := ui.newBrowserStateForTest(treeBrowserCfg(focusViewing, cov))
+
+	assert.NotContains(t, browserHeaders(st.table), "Host")
+}
+
+// TestBrowserMarkerGlyphs pins the two-cursor markers: ● Viewing and ◇ Baseline,
+// the focus caret on the driven cursor, and the ASCII fallbacks under
+// --no-unicode. ● must never render on the baseline's row.
+func TestBrowserMarkerGlyphs(t *testing.T) {
+	ui := browserTestUI(t)
+	st := ui.newBrowserStateForTest(treeBrowserCfg(focusBaseline, coveringListingsForTest(2)))
+
+	assert.Contains(t, ui.browserMarker(st, st.viewCur), "●", "● marks the Viewing cursor")
+	assert.Contains(t, ui.browserMarker(st, st.baseCur), "◇", "◇ marks the Baseline cursor")
+	assert.NotContains(t, ui.browserMarker(st, st.baseCur), "●", "● never appears on the baseline row")
+	assert.Contains(t, ui.browserMarker(st, st.baseCur), "▸", "the focused cursor carries the caret")
+	assert.NotContains(t, ui.browserMarker(st, st.viewCur), "▸", "the unfocused cursor has no caret")
+
+	ui.UseOldSizeBar() // --no-unicode
+	assert.Contains(t, ui.browserMarker(st, st.viewCur), "*", "● falls back to *")
+	assert.Contains(t, ui.browserMarker(st, st.baseCur), "o", "◇ falls back to o")
+}
+
+// TestBrowserPreSelectsActiveBaseline: opening with a baseline already set lands
+// ◇ on it, as the applied (not pending) position.
+func TestBrowserPreSelectsActiveBaseline(t *testing.T) {
+	ui := browserTestUI(t)
+	cov := coveringListingsForTest(3)
+	cfg := treeBrowserCfg(focusViewing, cov)
+	cfg.hasBaseline = true
+	cfg.baselineKey = cov[2].Key() // the oldest covering snapshot
+	st := ui.newBrowserStateForTest(cfg)
+
+	require.GreaterOrEqual(t, st.baseCur, 0)
+	assert.Equal(t, cov[2].Key(), st.rows[st.baseCur].listing.Key(), "◇ lands on the active baseline")
+	assert.Equal(t, st.baseCur, st.initBaseCur, "the applied baseline is not a pending change")
+}
+
+// TestBrowserFillResolvesFolderSizes drives the O door end-to-end through the
+// event loop: the covering snapshot's folder size fills in and its Δ vs the
+// live ● is computed.
+func TestBrowserFillResolvesFolderSizes(t *testing.T) {
+	dir := t.TempDir()
+	writeTinySnapshot(t, dir, "/root") // /root holds f=100
+	ui := newPickerUI(t, dir)          // live /root is 150
+
+	pressKey(ui, 'O')
+	settle(t, ui)
+	require.NotNil(t, ui.browser, "O opens the browser")
+	st := ui.browser
+
+	// Row 1 is the live row; row 2 is the covering snapshot.
+	assert.Contains(t, st.table.GetCell(2, st.sizeCol).Text, "100", "the snapshot folder size resolves")
+	assert.Contains(t, st.table.GetCell(2, st.deltaCol).Text, "50", "Δ vs live (150−100) renders")
 }

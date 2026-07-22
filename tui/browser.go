@@ -222,6 +222,11 @@ func (ui *UI) placeBrowserCursors(st *browserState) {
 	cfg := st.cfg
 	st.focus = cfg.initialFocus
 
+	// ◇ off before ● is placed: firstSelectable(false) excludes ◇'s row, so its
+	// zero value must be the "none" sentinel, not row 0.
+	st.baseCur = -1
+	st.initBaseCur = -1
+
 	// ● starts on the current View's row (the live row, or the matching
 	// snapshot); with no current view it starts on the first selectable row and
 	// initViewCur stays -1 so any Enter applies it.
@@ -241,8 +246,6 @@ func (ui *UI) placeBrowserCursors(st *browserState) {
 	// ◇ starts on the applied baseline; with none it stays off unless the
 	// baseline door (◇-focused) opened the browser, which pre-arms the snapshot
 	// immediately older than ● — the one-keypress "compare vs previous" default.
-	st.baseCur = -1
-	st.initBaseCur = -1
 	switch {
 	case cfg.baselineOnly:
 		st.focus = focusViewing

@@ -1,18 +1,13 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
-	"time"
 
-	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/tview"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/dundee/gdu/v5/internal/common"
 	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
 	"github.com/dundee/gdu/v5/pkg/parquet"
@@ -26,38 +21,10 @@ const (
 	snapshotErrorMarker     = "?" // the containing snapshot file could not be read
 	snapshotAbsentMarker    = "—" // the folder did not exist in that snapshot
 
-	// pickerRootWidth caps the picker's Root column, home-abbreviated then
+	// pickerRootWidth caps the browser's Root column, home-abbreviated then
 	// shortened (head + leaf) so a long scan root reads instead of hard-clipping.
 	pickerRootWidth = 40
 )
-
-// One picker component, three configurations: Baseline (S: covering roots,
-// "this folder then / Δ", Enter sets the Baseline), Open (O: all roots and
-// dates, Enter sets the View — the long jump), and Startup file (a
-// multi-snapshot -f: Open seeded with that file).
-// pickerConfig parameterizes the shared table + async fill + hint line.
-type pickerConfig struct {
-	title    string
-	listings []report.SnapshotListing
-	// hint renders the teaching line for the highlighted snapshot — the CLI
-	// equivalent of the interactive choice.
-	hint func(l *report.SnapshotListing) string
-	// onSelect fires on Enter with the highlighted snapshot.
-	onSelect func(l *report.SnapshotListing)
-	// escQuits makes Esc/q quit the app (the startup chooser has nothing to
-	// fall back to); otherwise they close the picker.
-	escQuits bool
-	// fillSizes starts the Baseline picker's asynchronous "this folder then /
-	// Δ vs now" column fill for target (sized against nowSize).
-	fillSizes bool
-	target    string
-	nowSize   int64
-	// refocus is the primitive to focus when the picker closes without a
-	// selection (Esc/q); nil focuses the main table. The launcher's S picker
-	// sets it to the launcher table so Esc returns to the launcher, not the
-	// empty grid behind it.
-	refocus tview.Primitive
-}
 
 // showStartupSnapshotPicker presents the snapshots held in a multi-snapshot
 // Parquet file opened with -f, so the user can choose which to load — the Open
@@ -76,98 +43,21 @@ func (ui *UI) showStartupSnapshotPicker(f *os.File, snapshots []parquet.Snapshot
 		listings[i] = report.SnapshotListing{SnapshotInfo: ordered[i]}
 	}
 
-	ui.buildPicker(&pickerConfig{
-		title:    fmt.Sprintf(" Select a snapshot (%d) — Enter to load, Esc to quit ", len(listings)),
-		listings: listings,
+	ui.showBrowser(&browserConfig{
+		scopeLabel:   filepath.Base(f.Name()),
+		covering:     listings,
+		baselineOnly: true, // the file's snapshots are the ● view; there is no baseline here
+		escQuits:     true, // the startup chooser has nothing to fall back to
 		hint: func(l *report.SnapshotListing) string {
 			return fmt.Sprintf(" gdu -f %s --snapshot %s", f.Name(), parquet.FormatSnapshotTime(&l.SnapshotInfo))
 		},
-		onSelect: func(l *report.SnapshotListing) {
-			ui.closeSnapshotPicker()
+		openView: func(l *report.SnapshotListing, _ func()) {
 			ui.loadSnapshotFromFile(f, &l.SnapshotInfo)
 		},
-		escQuits: true,
 	})
 }
 
-// buildPicker builds and shows the shared picker: the snapshot table, the
-// teaching hint line, and — for the Baseline configuration — the asynchronous
-// folder-size fill.
-func (ui *UI) buildPicker(cfg *pickerConfig) {
-	ui.snapshotPickerGen++ // a fresh picker; invalidate any prior fill's updates
-
-	table := tview.NewTable().SetSelectable(true, false)
-	table.SetBackgroundColor(tcell.ColorDefault)
-	table.SetBorder(true).SetTitle(cfg.title)
-	if ui.UseColors {
-		table.SetSelectedStyle(tcell.Style{}.
-			Foreground(ui.selectedTextColor).
-			Background(ui.selectedBackgroundColor).Bold(true))
-	}
-
-	rows := ui.fillPickerRows(table, cfg)
-
-	hint := tview.NewTextView().SetDynamicColors(true)
-	hint.SetBackgroundColor(tcell.ColorDefault)
-	updateHint := func(row int) {
-		idx := row - 1 // row 0 is the header
-		if idx < 0 || idx >= len(cfg.listings) {
-			return
-		}
-		hint.SetText(ui.dim(cfg.hint(&cfg.listings[idx])))
-	}
-	table.SetSelectionChangedFunc(func(row, _ int) { updateHint(row) })
-
-	table.SetSelectedFunc(func(row, _ int) {
-		idx := row - 1
-		if idx < 0 || idx >= len(cfg.listings) {
-			return
-		}
-		listing := cfg.listings[idx] // copy; onSelect may outlive the picker
-		if !cfg.escQuits {
-			ui.closeSnapshotPicker()
-		}
-		cfg.onSelect(&listing)
-	})
-	table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc || event.Rune() == 'q' {
-			if cfg.escQuits {
-				ui.finishQuit(false)
-				if ui.done != nil {
-					ui.done <- struct{}{}
-				}
-				return nil
-			}
-			ui.closeSnapshotPicker()
-			focus := tview.Primitive(ui.table)
-			if cfg.refocus != nil {
-				focus = cfg.refocus
-			}
-			ui.app.SetFocus(focus)
-			return nil
-		}
-		return event
-	})
-
-	flex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(table, 0, 1, true).
-		AddItem(hint, 1, 0, false)
-
-	ui.pages.AddPage("snapshotpicker", flex, true, true)
-	selectRow := 1
-	if r := ui.activeBaselineRow(cfg); r > 0 {
-		selectRow = r // reopen on the active baseline
-	}
-	table.Select(selectRow, 0)
-	updateHint(selectRow)
-	ui.app.SetFocus(table)
-
-	if cfg.fillSizes {
-		ui.startSnapshotSizeFill(table, cfg.listings, cfg.target, cfg.nowSize, rows)
-	}
-}
-
-// closeSnapshotPicker dismisses the picker and stops its background size fill:
+// closeSnapshotPicker dismisses the browser and stops its background size fill:
 // bumping the generation drops any queued cell updates, and cancelling the
 // context stops the reader mid-archive.
 func (ui *UI) closeSnapshotPicker() {
@@ -230,101 +120,6 @@ func mountForTarget(devices device.Devices, getter device.DevicesInfoGetter, tar
 	return ""
 }
 
-// fillPickerRows lays out the header and one row per snapshot, styled to match
-// the device table: a dim age on When, device-amber sizes, a mount-blue
-// Root column, and a bold Host column shown only when some snapshot is
-// foreign. The Baseline configuration gets placeholder folder-size cells (filled
-// asynchronously) and returns the identity→rows index the fill updates; the Open
-// configurations show each snapshot's total size directly. The active baseline's
-// row is marked.
-func (ui *UI) fillPickerRows(table *tview.Table, cfg *pickerConfig) map[parquet.SnapshotKey][]int {
-	localHost := common.HostnameBestEffort()
-	showHost := false
-	for i := range cfg.listings {
-		if common.HostIsForeign(cfg.listings[i].Host, localHost) {
-			showHost = true
-		}
-	}
-
-	var headers []string
-	if cfg.fillSizes {
-		headers = []string{"When", "This folder", "Δ vs now", "Root"}
-	} else {
-		headers = []string{"When", "Size", "Root"}
-	}
-	rootCol := len(headers) - 1
-	hostCol := -1
-	if showHost {
-		hostCol = len(headers)
-		headers = append(headers, "Host")
-	}
-	for col, h := range headers {
-		table.SetCell(0, col, tview.NewTableCell(h).SetSelectable(false).SetAttributes(tcell.AttrBold))
-	}
-
-	activeRow := ui.activeBaselineRow(cfg)
-	rows := make(map[parquet.SnapshotKey][]int, len(cfg.listings))
-	for i := range cfg.listings {
-		l := &cfg.listings[i]
-		row := i + 1
-		table.SetCell(row, 0, tview.NewTableCell(ui.pickerWhenCell(l, row == activeRow)))
-		if cfg.fillSizes {
-			table.SetCell(row, 1, tview.NewTableCell(ui.dim(snapshotSizePlaceholder)))
-			table.SetCell(row, 2, tview.NewTableCell(""))
-			rows[l.Key()] = append(rows[l.Key()], row)
-		} else {
-			table.SetCell(row, 1, tview.NewTableCell(ui.pickerSizeCell(l.TotalDsize)))
-		}
-		table.SetCell(row, rootCol, tview.NewTableCell(ui.pickerRootCell(l.ScanRoot)))
-		if hostCol >= 0 {
-			host := ""
-			if common.HostIsForeign(l.Host, localHost) {
-				host = ui.pickerHostCell(l.Host)
-			}
-			table.SetCell(row, hostCol, tview.NewTableCell(host))
-		}
-	}
-	return rows
-}
-
-// activeBaselineRow returns the 1-based table row of the picker's active
-// baseline — the snapshot currently set as Baseline — or 0 when none of
-// the listings is it. Only the Baseline (S) picker tracks an active row.
-func (ui *UI) activeBaselineRow(cfg *pickerConfig) int {
-	if !cfg.fillSizes || !ui.inDiffMode() {
-		return 0
-	}
-	for i := range cfg.listings {
-		if cfg.listings[i].Key() == ui.baselineKey {
-			return i + 1
-		}
-	}
-	return 0
-}
-
-// pickerWhenCell renders a snapshot's timestamp with a dim relative-age suffix,
-// prefixed by the active-baseline marker (blank padding otherwise, so the
-// timestamps stay column-aligned).
-func (ui *UI) pickerWhenCell(l *report.SnapshotListing, active bool) string {
-	when := parquet.FormatSnapshotTime(&l.SnapshotInfo)
-	age := ui.dim("(" + humanAge(time.Since(l.ScanTs)) + " ago)")
-	return ui.baselineMarker(active) + when + "  " + age
-}
-
-// baselineMarker returns a picker row's leading marker: the hollow Baseline
-// glyph on the row currently set as Baseline, else blank padding of the same
-// width so columns line up. The glyph is the same one the header's Baseline
-// line carries, so one shape means one role everywhere.
-func (ui *UI) baselineMarker(active bool) string {
-	if !active {
-		return "  "
-	}
-	if ui.UseColors {
-		return "[" + deviceNameColor + "::b]" + ui.baselineGlyph() + "[-:-:-] "
-	}
-	return ui.baselineGlyph() + " "
-}
-
 // pickerSizeCell renders a size in the device-table amber (plain without colors).
 func (ui *UI) pickerSizeCell(size int64) string {
 	if ui.UseColors {
@@ -358,80 +153,7 @@ func (ui *UI) dim(s string) string {
 	return ui.dimTag() + s
 }
 
-// startSnapshotSizeFill reads each covering snapshot's folder size in the background
-// and fills the matching rows as sizes resolve; snapshots whose file can't be read are
-// marked unreadable, and any scan still unresolved at the end had no row for the
-// folder (absent). Stale updates (the picker was closed or replaced) are dropped
-// by the generation guard.
-func (ui *UI) startSnapshotSizeFill(
-	table *tview.Table, covering []report.SnapshotListing, target string, nowSize int64,
-	rows map[parquet.SnapshotKey][]int,
-) {
-	ctx, cancel := context.WithCancel(context.Background())
-	ui.snapshotSizeCancel = cancel
-	gen := ui.snapshotPickerGen
-	resolved := make(map[parquet.SnapshotKey]bool, len(rows))
-
-	// apply runs update on the event loop only while this picker is still current.
-	apply := func(update func()) {
-		ui.app.QueueUpdateDraw(func() {
-			if ui.snapshotPickerGen == gen {
-				update()
-			}
-		})
-	}
-
-	ui.goPickerWork(func() {
-		report.FolderSizesEach(ctx, ui.snapshotsDir, covering, target,
-			func(key parquet.SnapshotKey, size int64) {
-				apply(func() {
-					resolved[key] = true
-					for _, row := range rows[key] {
-						ui.setPickerSize(table, row, size, nowSize)
-					}
-				})
-			},
-			func(key parquet.SnapshotKey) {
-				apply(func() {
-					resolved[key] = true
-					for _, row := range rows[key] {
-						ui.setPickerCells(table, row, snapshotErrorMarker)
-					}
-				})
-			})
-		// Any snapshot still unresolved has no row for target — show it as absent.
-		apply(func() {
-			for key, rowList := range rows {
-				if resolved[key] {
-					continue
-				}
-				for _, row := range rowList {
-					ui.setPickerCells(table, row, snapshotAbsentMarker)
-				}
-			}
-		})
-	})
-}
-
-// setPickerSize writes a resolved folder size (device-amber) and its change
-// versus now into a picker row.
-func (ui *UI) setPickerSize(table *tview.Table, row int, size, nowSize int64) {
-	table.SetCell(row, 1, tview.NewTableCell(ui.pickerSizeCell(size)))
-	table.SetCell(row, 2, tview.NewTableCell(ui.pickerDelta(nowSize-size)))
-}
-
-// setPickerCells fills a picker row's size and Δ columns with the same marker,
-// used for the absent ("—", dim) and unreadable ("?", red) states.
-func (ui *UI) setPickerCells(table *tview.Table, row int, marker string) {
-	cell := ui.dim(marker)
-	if marker == snapshotErrorMarker && ui.UseColors {
-		cell = "[red::b]" + marker
-	}
-	table.SetCell(row, 1, tview.NewTableCell(cell))
-	table.SetCell(row, 2, tview.NewTableCell(cell))
-}
-
-// pickerDelta renders the current-vs-snapshot change for the picker's Δ column,
+// pickerDelta renders the current-vs-snapshot change for the browser's Δ column,
 // warm for growth and cool for shrink.
 func (ui *UI) pickerDelta(delta int64) string {
 	if delta == 0 {

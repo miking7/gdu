@@ -610,9 +610,12 @@ func (ui *UI) launcherOpenLatest() {
 	ui.openSnapshotView(&listing, wantPath, "", true, nil)
 }
 
-// launcherPickSnapshot opens a picker of the selected row's mapped snapshots
-// (key S) over the launcher; Enter opens the chosen one as the View, Esc returns
-// to the launcher.
+// launcherPickSnapshot opens the unified browser over the selected row's mapped
+// snapshots (key S), scoped to that row's root — the full two-cursor grammar, so
+// a view and a baseline can both be chosen before the first tree is ever shown
+// (landing directly in a compare view). There is no live row (nothing is scanned
+// yet); Enter opens the ● snapshot as the View and applies the ◇ baseline; Esc
+// returns to the launcher.
 func (ui *UI) launcherPickSnapshot() {
 	r := ui.selectedLauncherRow()
 	if r == nil || r.kind == launcherOther {
@@ -629,20 +632,22 @@ func (ui *UI) launcherPickSnapshot() {
 	covering := r.covering
 	wantPath := r.landPath() // the pinned own-disk row lands at the default dir
 	st := ui.launcher
-	ui.buildPicker(&pickerConfig{
-		title: fmt.Sprintf(" Open a snapshot of %s (%d) — Enter to open, Esc to cancel ",
-			path.ShortenPath(wantPath, 40), len(covering)),
-		listings: covering,
+	ui.showBrowser(&browserConfig{
+		scopeLabel:   path.ShortenPath(abbrevHome(wantPath, homeDir()), 48),
+		covering:     covering,
+		fillTarget:   wantPath,
+		initialFocus: focusViewing,
+		refocus:      st.table,
 		hint: func(l *report.SnapshotListing) string {
 			return fmt.Sprintf(" gdu --snapshot %s %s",
 				parquet.FormatSnapshotTime(&l.SnapshotInfo), l.ScanRoot)
 		},
-		onSelect: func(l *report.SnapshotListing) {
-			listing := *l
+		openView: func(l *report.SnapshotListing, then func()) {
 			ui.closeLauncher()
-			ui.openSnapshotView(&listing, wantPath, "", true, nil)
+			ui.openSnapshotView(l, wantPath, "", true, then)
 		},
-		refocus: st.table,
+		applyBaseline: func(l *report.SnapshotListing) { ui.setBaselineFromListing(l) },
+		clearBaseline: func() { ui.clearBaseline() },
 	})
 }
 

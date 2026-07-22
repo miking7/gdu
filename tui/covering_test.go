@@ -1,24 +1,19 @@
 package tui
 
 import (
-	"bytes"
 	"testing"
 	"time"
 
-	"github.com/rivo/tview"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/dundee/gdu/v5/internal/common"
 	"github.com/dundee/gdu/v5/internal/testanalyze"
-	"github.com/dundee/gdu/v5/internal/testapp"
 	"github.com/dundee/gdu/v5/internal/testdev"
-	"github.com/dundee/gdu/v5/pkg/analyze"
 	"github.com/dundee/gdu/v5/pkg/device"
 )
 
-// Mount-accurate covering for the S picker and timeline, go-live tree
-// membership, the Root/Host columns, and the active-baseline mark.
+// Mount-accurate covering for the browser and timeline, plus go-live tree
+// membership.
 
 func TestMountForTarget(t *testing.T) {
 	devs := device.Devices{{MountPoint: "/"}, {MountPoint: "/Volumes/SD"}}
@@ -61,93 +56,5 @@ func TestViewContains(t *testing.T) {
 	assert.False(t, viewContains(live, ""), "no folder")
 }
 
-func headerTexts(table *tview.Table) []string {
-	var hs []string
-	for c := 0; c < table.GetColumnCount(); c++ {
-		if cell := table.GetCell(0, c); cell != nil {
-			hs = append(hs, cell.Text)
-		}
-	}
-	return hs
-}
-
-func TestBaselinePickerRootColumnAndForeignHost(t *testing.T) {
-	dir := t.TempDir()
-	// The picker abbreviates $HOME to ~ in the Root cell; when the suite runs
-	// as root (HOME=/root) that would swallow the literal "/root" this test
-	// asserts on, so pin HOME somewhere the fixture path can never match.
-	t.Setenv("HOME", t.TempDir())
-	// WriteSnapshot stamps host "h1", foreign to any real test machine.
-	require.NoError(t, testanalyze.WriteSnapshot(dir, "snap.parquet", "/root", "f", time.Unix(1700000000, 0).UTC()))
-	ui := newPickerUI(t, dir)
-
-	covering, err := ui.coveringListings("/root", "")
-	require.NoError(t, err)
-	table, _ := ui.buildBaselinePickerForTest(covering)
-
-	headers := headerTexts(table)
-	assert.Contains(t, headers, "Root", "the Baseline picker gains a Root column")
-	assert.Contains(t, headers, "Host", "a foreign snapshot reveals the Host column")
-
-	// The Root cell shows the snapshot's scan root.
-	assert.Contains(t, table.GetCell(1, 3).Text, "/root")
-}
-
-func TestBaselinePickerHidesLocalHost(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, testanalyze.WriteSnapshotAs(dir, "snap.parquet", "/root", "f",
-		common.HostnameBestEffort(), time.Unix(1700000000, 0).UTC()))
-	ui := newPickerUI(t, dir)
-
-	covering, err := ui.coveringListings("/root", "")
-	require.NoError(t, err)
-	table, _ := ui.buildBaselinePickerForTest(covering)
-
-	assert.NotContains(t, headerTexts(table), "Host",
-		"a same-machine snapshot leaves the Host column off")
-}
-
-func TestBaselinePickerMarksActiveBaseline(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, testanalyze.WriteSnapshot(dir, "a.parquet", "/root", "f", time.Unix(1700000000, 0).UTC()))
-	require.NoError(t, testanalyze.WriteSnapshot(dir, "b.parquet", "/root", "f", time.Unix(1700009999, 0).UTC()))
-	ui := newPickerUI(t, dir)
-
-	covering, err := ui.coveringListings("/root", "")
-	require.NoError(t, err)
-	require.Len(t, covering, 2)
-
-	// Make the older snapshot the active baseline (covering is newest-first, so
-	// it is index 1 → table row 2).
-	older := covering[1]
-	ui.baseline = analyze.BuildBaseline(liveRootTree(), older.ScanRoot, 0)
-	ui.baselineKey = older.Key()
-
-	table, _ := ui.buildBaselinePickerForTest(covering)
-	selRow, _ := table.GetSelection()
-	assert.Equal(t, 2, selRow, "reopening S pre-selects the active baseline's row")
-	assert.Contains(t, table.GetCell(2, 0).Text, "◇", "the active baseline row carries the Baseline glyph")
-	assert.NotContains(t, table.GetCell(1, 0).Text, "◇", "other rows are not marked")
-	assert.NotContains(t, table.GetCell(2, 0).Text, "●",
-		"● now means the tree being viewed — never the baseline")
-}
-
-// TestBaselineMarkerGlyphAndColor pins the active-baseline marker: the hollow
-// Baseline glyph in the device-table blue (not the old amber size color), the
-// ASCII fallback under --no-unicode, and same-width padding on inactive rows.
-func TestBaselineMarkerGlyphAndColor(t *testing.T) {
-	app := testapp.CreateMockedApp(true)
-	sim := testapp.CreateSimScreen()
-	t.Cleanup(func() { sim.Fini() })
-	ui := CreateUI(app, sim, &bytes.Buffer{}, true, false, false, false) // colors on
-
-	active := ui.baselineMarker(true)
-	assert.Contains(t, active, "◇", "active marker uses the hollow Baseline glyph")
-	assert.Contains(t, active, deviceNameColor, "in the device-table blue")
-	assert.NotContains(t, active, deviceSizeColor, "not the old amber size color")
-	assert.Equal(t, "  ", ui.baselineMarker(false), "inactive rows pad to the marker width")
-
-	ui.UseOldSizeBar() // --no-unicode
-	assert.Contains(t, ui.baselineMarker(true), "o", "ASCII fallback keeps the hollow role")
-	assert.NotContains(t, ui.baselineMarker(true), "◇")
-}
+// The browser's Root/Host columns, the ◇/● marker glyphs and their fallbacks,
+// and the active-baseline pre-placement are covered in browser_test.go.
