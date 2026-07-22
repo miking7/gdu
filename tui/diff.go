@@ -130,7 +130,9 @@ func (ui *UI) baselineCoversFolder(folder string) bool {
 // not-covering transition (tracked by baselineEverCovered), so a baseline that
 // never covered — the --baseline-root cross-volume override — is never cleared
 // out from under the user, and it is a no-op mid-preview (a partial tree is not a
-// real folder change; that is stage 5's concern). It clears state only: the
+// real folder change: the baseline is suppressed for the preview's duration, not
+// cleared, and its rendering resumes when the scan completes). It clears state
+// only: the
 // caller renders once (showDir then sees no baseline) and flashes
 // baselineUncoveredFlash afterwards, so the flash is not clobbered by showDir's
 // own footer. Must run on the event loop, before the folder is rendered.
@@ -165,10 +167,20 @@ func (ui *UI) resetRowSelection() {
 func (ui *UI) inDiffMode() bool { return ui.baseline != nil }
 
 // renderingDelta reports whether the Δ column should actually be drawn: a
-// baseline is set and the Tab peek toggle has not hidden it. When false the tree
-// renders exactly as the plain view even though the baseline persists, so Tab
-// flips between the two renderings without touching the baseline.
-func (ui *UI) renderingDelta() bool { return ui.inDiffMode() && !ui.diffHidden }
+// baseline is set, the Tab peek toggle has not hidden it, and no mid-scan preview
+// is up. When false the tree renders exactly as the plain view even though the
+// baseline persists, so Tab flips between the two renderings without touching the
+// baseline. The preview clause is load-bearing: the preview shows the partial
+// scan tree, which has not discovered every child yet, so diffing it against a
+// complete baseline would render still-unscanned items as phantom removals. The
+// baseline is suppressed, not cleared — the header shows the paused tail and the
+// diff resumes on its own when the scan completes. Suppressing it here (rather
+// than at the showDir dispatch alone) also keeps the sort consistent: setSorting
+// keys off renderingDelta, so a sort key pressed in the preview targets the plain
+// sort that is actually on screen.
+func (ui *UI) renderingDelta() bool {
+	return ui.inDiffMode() && !ui.diffHidden && !ui.previewing
+}
 
 // showDiffDir renders the current directory as the normal table with a Δ column
 // appended: the same flag/size/percentage/bar/count/mtime/mark anatomy as the
