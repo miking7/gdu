@@ -29,6 +29,8 @@ var (
 History — view & compare (snapshot views are read-only; d/e offer to go live):
                [::b][     [white:black:-]Step to an older snapshot of this folder
                [::b]]     [white:black:-]Step to a newer snapshot; at the newest, back to live
+               [::b]{     [white:black:-]Step the baseline older (with none set, compare vs previous)
+               [::b]}     [white:black:-]Step the baseline newer; onto the view or past newest clears it
                [::b]O     [white:black:-]Open the snapshot browser (choose the view; ● focused)
                [::b]B     [white:black:-]Open the snapshot browser to pick a baseline (◇ focused)
              [::b]Tab     [white:black:-]With a baseline set, toggle the growth (Δ) column on/off

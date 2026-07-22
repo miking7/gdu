@@ -16,7 +16,7 @@ const (
 	// covering history yet).
 	upstreamHint = " gdu ~ Use arrow keys to navigate, press ? for help "
 	// historyHint replaces it once covering history exists for the shown root.
-	historyHint = " gdu ~ [ back in time · B compare · O snapshots · ? help "
+	historyHint = " gdu ~ [ back in time · { compare · O snapshots · ? help "
 
 	// headerTimeLayout renders snapshot timestamps in header/footer copy
 	// ("2026-06-19 15:30"); headerDateLayout is the compact-prefix form and
