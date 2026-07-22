@@ -102,7 +102,7 @@ func settle(t *testing.T, ui *UI) {
 			}
 			continue
 		}
-		if !ui.stepLoading && ui.snapshotWorkActive.Load() == 0 {
+		if !ui.stepLoading && !ui.baseStepLoading && ui.snapshotWorkActive.Load() == 0 {
 			return
 		}
 		time.Sleep(2 * time.Millisecond)
@@ -643,4 +643,185 @@ func TestFirstScanFallsBackToShallowerTimeline(t *testing.T) {
 	require.NotNil(t, ui.currentView.snapshot, "the walk falls back to the whole-disk timeline")
 	assert.Equal(t, "/", ui.timelineRoot)
 	assert.True(t, ui.currentView.snapshot.ScanTs.Equal(ts1))
+}
+
+// --- Baseline stepping ({ }) ------------------------------------------------
+
+// TestBaselineStepEntersCompareVsPrevious: { with no baseline compares the view
+// against the snapshot immediately before it (E3); further { walk older; { at
+// the oldest is a soft notice with the baseline unchanged.
+func TestBaselineStepEntersCompareVsPrevious(t *testing.T) {
+	dir := t.TempDir()
+	writeArchiveSnapshot(t, dir, "s1.parquet", "/root", 10, 10, ts1)
+	writeArchiveSnapshot(t, dir, "s2.parquet", "/root", 20, 40, ts2)
+	ui := newLiveUI(t, dir)
+	enterSub(t, ui)
+
+	pressKey(ui, '{')
+	settle(t, ui)
+	require.True(t, ui.inDiffMode(), "{ enters a comparison")
+	assert.True(t, ui.baselineTs.Equal(ts2), "compare vs the previous (newest) snapshot")
+	assert.True(t, ui.renderingDelta(), "the Δ column is shown")
+	assert.True(t, ui.viewIsLive(), "the view is unchanged — only the baseline moved")
+
+	pressKey(ui, '{')
+	settle(t, ui)
+	assert.True(t, ui.baselineTs.Equal(ts1), "{ walks the baseline older")
+
+	pressKey(ui, '{')
+	settle(t, ui)
+	assert.True(t, ui.baselineTs.Equal(ts1), "no snapshot older than the oldest")
+	assert.Contains(t, ui.headerNotice, oldestNotice)
+	assert.True(t, ui.inDiffMode(), "the baseline is kept at the oldest")
+}
+
+// TestBaselineStepOntoViewClears: } walking the baseline onto the view's
+// position clears it (E4) — the linear-timeline mirror of { entering it.
+func TestBaselineStepOntoViewClears(t *testing.T) {
+	dir := t.TempDir()
+	writeArchiveSnapshot(t, dir, "s1.parquet", "/root", 10, 10, ts1)
+	writeArchiveSnapshot(t, dir, "s2.parquet", "/root", 20, 40, ts2)
+	ui := newLiveUI(t, dir)
+	enterSub(t, ui)
+
+	pressKey(ui, '{') // baseline = ts2, just below the live view
+	settle(t, ui)
+	require.True(t, ui.inDiffMode())
+
+	pressKey(ui, '}') // steps ◇ up onto the live position → clears
+	settle(t, ui)
+	assert.False(t, ui.inDiffMode(), "} onto the view clears the baseline")
+	assert.Contains(t, ui.footerLabel.GetText(false), "baseline cleared")
+}
+
+// TestBaselineBraceNewerWithNoBaselineTeaches: } with nothing set points at {,
+// rather than doing nothing.
+func TestBaselineBraceNewerWithNoBaselineTeaches(t *testing.T) {
+	dir := t.TempDir()
+	writeArchiveSnapshot(t, dir, "s1.parquet", "/root", 10, 10, ts1)
+	ui := newLiveUI(t, dir)
+	enterSub(t, ui)
+
+	pressKey(ui, '}')
+	settle(t, ui)
+	assert.False(t, ui.inDiffMode())
+	assert.Contains(t, ui.headerNotice, "no baseline — { compare previous")
+}
+
+// TestBaselineStepRetargetsWhileLoading: once the timeline is pinned, pressing {
+// again before the load lands chains to the older target through the loading
+// page (mirroring the view walk's retarget), rather than stalling or landing on
+// a stale intermediate.
+func TestBaselineStepRetargetsWhileLoading(t *testing.T) {
+	dir := t.TempDir()
+	writeArchiveSnapshot(t, dir, "s1.parquet", "/root", 10, 10, ts1)
+	writeArchiveSnapshot(t, dir, "s2.parquet", "/root", 20, 40, ts2)
+	writeArchiveSnapshot(t, dir, "s3.parquet", "/root", 30, 60, ts3)
+	ui := newLiveUI(t, dir)
+	enterSub(t, ui)
+
+	pressKey(ui, '{') // establish baseline = ts3 and pin the timeline
+	settle(t, ui)
+	require.True(t, ui.baselineTs.Equal(ts3))
+
+	pressKey(ui, '{') // heads to ts2 (loading page up, timeline active)
+	pressKey(ui, '{') // retargets to ts1 before ts2 lands
+	settle(t, ui)
+	assert.True(t, ui.baselineTs.Equal(ts1), "the walk chained through to the older target")
+}
+
+// TestBaselineViewCrossesBaseline: stepping the view onto the baseline snapshot
+// flashes the honest-zero notice and keeps the comparison (E5); stepping the
+// view past it leaves ◇ newer than ● (E6); { then walks ◇ back onto ● and clears.
+func TestBaselineViewCrossesBaseline(t *testing.T) {
+	dir := t.TempDir()
+	writeArchiveSnapshot(t, dir, "s1.parquet", "/root", 10, 10, ts1)
+	writeArchiveSnapshot(t, dir, "s2.parquet", "/root", 20, 40, ts2)
+	writeArchiveSnapshot(t, dir, "s3.parquet", "/root", 30, 60, ts3)
+	ui := newLiveUI(t, dir)
+	enterSub(t, ui)
+
+	pressKey(ui, '{') // baseline = ts3 (the previous to live)
+	settle(t, ui)
+	require.True(t, ui.baselineTs.Equal(ts3))
+
+	pressKey(ui, '[') // step the view onto ts3 — the baseline itself
+	settle(t, ui)
+	require.NotNil(t, ui.currentView.snapshot)
+	assert.True(t, ui.currentView.snapshot.ScanTs.Equal(ts3), "view lands on the baseline snapshot")
+	assert.Contains(t, ui.footerLabel.GetText(false), "viewing the baseline snapshot", "E5 flash")
+	assert.True(t, ui.inDiffMode(), "the baseline is kept")
+
+	pressKey(ui, '[') // step the view older than the baseline → ◇ now newer than ● (E6)
+	settle(t, ui)
+	require.NotNil(t, ui.currentView.snapshot)
+	assert.True(t, ui.currentView.snapshot.ScanTs.Equal(ts2))
+	assert.True(t, ui.baselineTs.After(ui.currentView.snapshot.ScanTs), "◇ is newer than ● (E6)")
+
+	pressKey(ui, '{') // walk ◇ older, onto ●'s position → clears (E4)
+	settle(t, ui)
+	assert.False(t, ui.inDiffMode(), "{ onto the view clears")
+	assert.Contains(t, ui.footerLabel.GetText(false), "baseline cleared")
+}
+
+// TestBaselineStepOffNewestEndClears: with the view stepped back, } walks the
+// baseline off the newest snapshot and clears — ◇ never rests on the live end.
+func TestBaselineStepOffNewestEndClears(t *testing.T) {
+	dir := t.TempDir()
+	writeArchiveSnapshot(t, dir, "s1.parquet", "/root", 10, 10, ts1)
+	writeArchiveSnapshot(t, dir, "s2.parquet", "/root", 20, 40, ts2)
+	writeArchiveSnapshot(t, dir, "s3.parquet", "/root", 30, 60, ts3)
+	ui := newLiveUI(t, dir)
+	enterSub(t, ui)
+
+	pressKey(ui, '{') // baseline = ts3 (newest)
+	settle(t, ui)
+	require.True(t, ui.baselineTs.Equal(ts3))
+
+	pressKey(ui, '[') // view onto ts3
+	settle(t, ui)
+	pressKey(ui, '[') // view onto ts2 → ◇=ts3 is the newest entry and newer than ●
+	settle(t, ui)
+	require.True(t, ui.currentView.snapshot.ScanTs.Equal(ts2))
+
+	pressKey(ui, '}') // ◇ steps off the newest end → clears
+	settle(t, ui)
+	assert.False(t, ui.inDiffMode(), "} off the newest snapshot clears")
+	assert.Contains(t, ui.footerLabel.GetText(false), "baseline cleared")
+}
+
+// TestBaselineStepClearsOnCoverageLoss: navigating up out of a deeper baseline's
+// coverage clears it with the E7 flash (the browser-seam rule, at nav time).
+func TestBaselineStepClearsOnCoverageLoss(t *testing.T) {
+	dir := t.TempDir()
+	writeArchiveSnapshot(t, dir, "sub.parquet", "/root/sub", 30, -1, ts2)
+	ui := newLiveUI(t, dir)
+	enterSub(t, ui)
+
+	pressKey(ui, '{') // baseline = the /root/sub snapshot
+	settle(t, ui)
+	require.True(t, ui.inDiffMode())
+	require.True(t, ui.baselineEverCovered)
+
+	ui.handleLeft() // navigate up to /root — outside the baseline's coverage
+	assert.False(t, ui.inDiffMode(), "leaving the baseline's coverage clears it")
+	assert.Contains(t, ui.footerLabel.GetText(false), "baseline no longer covers this folder — cleared")
+	assert.NotContains(t, ui.header.GetText(false), "Baseline", "the header collapses off the ◇ line")
+}
+
+// TestBaselineNeverCoveringSurvivesNavigation: a baseline that never covers the
+// shown folder — the --baseline-root cross-volume override — is not auto-cleared
+// by navigation, because the coverage latch never arms.
+func TestBaselineNeverCoveringSurvivesNavigation(t *testing.T) {
+	dir := t.TempDir()
+	ui := newLiveUI(t, dir) // viewing live /root
+
+	other := &parquet.SnapshotInfo{ScanRoot: "/other", ScanTs: ts1}
+	ui.SetBaseline(analyze.BuildBaseline(liveRootTree(), "/other", 0), other)
+	require.True(t, ui.inDiffMode())
+	assert.False(t, ui.baselineEverCovered, "a non-covering baseline never arms the latch")
+
+	cleared := ui.enforceBaselineCoverage("/root/sub") // simulate navigation
+	assert.False(t, cleared)
+	assert.True(t, ui.inDiffMode(), "the cross-volume override survives navigation")
 }
