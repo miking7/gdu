@@ -160,7 +160,18 @@ gdu can export/import scans as Apache Parquet and auto-archive them for trend an
   `--read-from-storage` — are hard read-only and signpost a *go live here* flow (instant switch to
   a covering in-memory live tree, else a confirmed transient spot-rescan). `[`/`]` walk the
   covering-snapshot timeline ([tui/timeline.go](tui/timeline.go); pinned to one root per walk,
-  live is the newest point, the just-saved snapshot *folds* into it); `O`/`B` open the **unified
+  live is the newest point, the just-saved snapshot *folds* into it); `{`/`}` walk the **Baseline**
+  `◇` along that same pinned timeline (`{` with none set = compare vs the previous snapshot; loads
+  run off the event loop behind the loading page via the shared `ensureTimelineThen`). The tree
+  walk is **linear**, deliberately unlike the browser's two-cursor `{`/`}`: ◇ never rests on the
+  live end or on `●`, so `}` onto `●` — or off the newest end — *clears* the comparison
+  (`baseline cleared`), and `[`/`]` landing `●` on the ◇ snapshot renders an honest all-`·` zero
+  (`viewing the baseline snapshot`). ◇'s position is derived from `baselineKey` by identity each
+  step (timestamp insertion when it lies off the pinned root), never stored positionally. A
+  baseline is auto-cleared when navigation leaves its coverage (E7: `enforceBaselineCoverage` in
+  `applyView`/`fileItemSelected`, same `RootCoversWithinMount` rule and flash as the browser apply
+  seam) — but only after it was seen covering (`baselineEverCovered` latch), so a never-covering
+  `--baseline-root` override survives. `O`/`B` open the **unified
   snapshot browser** ([tui/browser.go](tui/browser.go); `O` with the `●` Viewing cursor focused, `B`
   with the `◇` Baseline cursor focused — one window, two doors);
   `Esc` is layered (modal → clear baseline → return view) and **never scans**. The two-slot header

@@ -240,6 +240,33 @@ Removed items render inline: parenthesized then-size, `✗` marker, name + `(rem
   per E4 — a linear timeline can't skip a point, but the browser's free two-cursor surface
   can, keeping every eligible row reachable.
 
+**Stage-4 refinements** (decided while implementing baseline stepping; recorded so stages 5–6
+stay consistent):
+- **Every `{`/`}` clear is uniform**, and both terminal gestures clear: `}` walking `◇` onto
+  `●`'s position (E4) *and* `{` walking `◇` onto `●` from the newer side, *and* `}` off the
+  newest end (◇ never rests on the live end). One rule — "◇ may not equal `●` or exceed the
+  live end" — expressed as `target == viewPos || target >= len(entries)` in `baselineStep`.
+- **`}` with no baseline teaches `{`** (`no baseline — { compare previous · B choose`) rather
+  than engaging a default the way the browser's `}` does — the tree gesture pointing
+  backward-to-nothing has nothing to walk from.
+- **E7 is a coverage *latch*, not a forced-flag API.** `baselineEverCovered` arms the moment
+  the baseline is seen covering the shown folder; the auto-clear fires only on a
+  covering→not-covering transition. A `--baseline-root` cross-volume baseline never covers, so
+  the latch never arms and the override survives navigation — no app-layer change needed. The
+  latch is armed in `SetBaseline` and re-checked in `enforceBaselineCoverage`; the clear is
+  state-only so the caller renders once and flashes after (showDir owns the footer, so a flash
+  before it is lost — and `fileItemSelected` must also `updateHeader` on clear, which showDir
+  does not).
+- **◇'s position is identity-derived** (`baselineEntryIndex` on `baselineKey`, timestamp
+  insertion when off the pinned root) rather than a stored index — the stage-3 "select by
+  identity" lesson, so cross-root and folded-just-saved baselines step with no special case.
+  A separate `baseStepTarget`/`baseStepLoading` pair mirrors `stepTarget`/`stepLoading` only to
+  track an *in-flight* walk for retarget-chaining; it shares `stepGen` as the supersession
+  guard. `setBaselineFromListing` gained the generation guard it was missing.
+- **Rapid `{{` retargets only once the timeline is pinned** — the second press during the
+  initial off-loop derivation is dropped (loading page up, `timelineActive` still false), same
+  as `[[`. Verified by pty (no deadlock across interleaved `{ } [ ]` bursts) and unit test.
+
 ### 4.4 Scan screens — the Tab boundary
 
 **Rule: the partial preview belongs to the scan screen's pair, and a partial tree never
